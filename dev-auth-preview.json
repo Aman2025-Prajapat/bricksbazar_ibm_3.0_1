@@ -1,0 +1,17 @@
+﻿{
+  "prompt": "Natural daylight interior",
+  "quality": "balanced",
+  "layout": {
+    "totalSqFt": 1200,
+    "floors": 2,
+    "plotFacing": "north",
+    "wallMaterial": "brick",
+    "floorMaterial": "tiles",
+    "vastuEnabled": true,
+    "vastuScore": 82,
+    "rooms": [
+      {"type":"bedroom","floor":1,"width":12,"length":10,"hasWindow":true},
+      {"type":"kitchen","floor":1,"width":10,"length":8,"hasWindow":true}
+    ]
+  }
+}

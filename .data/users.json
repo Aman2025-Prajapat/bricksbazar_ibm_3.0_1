@@ -1,0 +1,72 @@
+[
+  {
+    "id": "dcf082fa-3aea-4190-9930-b6ff05a662b3",
+    "name": "distributor",
+    "email": "amanprajapat6268@gmail.com",
+    "role": "buyer",
+    "passwordHash": "$2b$12$fvVctl9t2ni9OGYy4PUjVO9a9GSjhzYztGxscFHir/1hr.6uTw.vy",
+    "verified": false,
+    "createdAt": "2026-03-02T14:31:37.009Z",
+    "avatar": null
+  },
+  {
+    "id": "b2dfbcc7-6198-4169-9c63-12817ffbdb2b",
+    "name": "distributor",
+    "email": "pariyaakshat0@gmail.com",
+    "role": "seller",
+    "passwordHash": "$2b$12$//7iDdV7lAiAymP8WiXhm.S0/IE.XaXlIR07da6eL641TGrGjvYZS",
+    "verified": false,
+    "createdAt": "2026-03-02T14:46:47.902Z",
+    "avatar": null
+  },
+  {
+    "id": "0ccbb12f-fc28-4e6a-a0cb-faf86d72eaec",
+    "name": "distributor",
+    "email": "codewithamanprajapat@gmail.com",
+    "role": "distributor",
+    "passwordHash": "$2b$12$cLt9a/jkw.mjz/rTqrcL2e0ApVB/EuS16RDPfFOdtdCx6UC7fdHIy",
+    "verified": false,
+    "createdAt": "2026-03-04T14:05:57.426Z",
+    "avatar": null
+  },
+  {
+    "id": "a0a84f36-4ee4-45f2-a0ed-e99efe8ac4f4",
+    "name": "Admin",
+    "email": "admin@bricksbazar.com",
+    "role": "admin",
+    "passwordHash": "$2b$12$uk9UeW677tKHdUPKq8wqiOn5QF5cVJR/M1pCQjyeHJdU4F2FzhXhy",
+    "verified": true,
+    "createdAt": "2026-03-04T00:00:00.000Z",
+    "avatar": null
+  },
+  {
+    "id": "a4dbbbae-8e7a-49c9-87da-8c5521a5c1a1",
+    "name": "seller",
+    "email": "seller@123gmail.com",
+    "role": "seller",
+    "passwordHash": "$2b$12$pJ1HObjsT.BPb8Xw1hMk6O11q9.nm5DlK.TWqfCO/RuucAhe8TrpO",
+    "verified": false,
+    "createdAt": "2026-03-04T15:23:18.759Z",
+    "avatar": null
+  },
+  {
+    "id": "2d1465d4-2f41-4fef-8b64-49770d274e02",
+    "name": "seller",
+    "email": "seller@1234gmail.com",
+    "role": "seller",
+    "passwordHash": "$2b$12$nmIsVlBLXtTD9B696n6AJO3Cw7VkN322HkOEwlBTnvEREJrEqCyJ2",
+    "verified": false,
+    "createdAt": "2026-03-04T16:10:36.388Z",
+    "avatar": null
+  },
+  {
+    "id": "11b718b1-6126-432c-b2c2-6cf29ce9fe4c",
+    "name": "distributor",
+    "email": "distributor@1234gmail.com",
+    "role": "distributor",
+    "passwordHash": "$2b$12$PFy0XWrr9LMVRGt7PASX3ePY3Fr45DSBzcF1TQAWBbzG5njxdvxVK",
+    "verified": false,
+    "createdAt": "2026-03-04T16:11:03.432Z",
+    "avatar": null
+  }
+]

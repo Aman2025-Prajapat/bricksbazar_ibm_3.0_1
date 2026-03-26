@@ -1,0 +1,114 @@
+{
+  "products": [
+    {
+      "name": "sand ",
+      "category": "Sand",
+      "price": 100,
+      "unit": "per pag",
+      "stock": 1,
+      "minStock": 1000,
+      "image": "/placeholder.svg",
+      "rating": 4.5,
+      "status": "active",
+      "sellerId": "b2dfbcc7-6198-4169-9c63-12817ffbdb2b",
+      "sellerName": "distributor",
+      "id": "1f78516a-84e8-4caa-88ea-b23e3fbbda73",
+      "createdAt": "2026-03-02T14:57:29.752Z",
+      "updatedAt": "2026-03-02T14:57:29.752Z"
+    },
+    {
+      "id": "prod-001",
+      "name": "Premium Red Bricks",
+      "category": "Bricks",
+      "price": 8.5,
+      "unit": "per piece",
+      "stock": 23900,
+      "minStock": 5000,
+      "status": "active",
+      "rating": 4.9,
+      "image": "/placeholder.svg?key=brick1",
+      "sellerId": "seed-seller-1",
+      "sellerName": "Delhi Brick Works",
+      "createdAt": "2026-03-02T14:36:48.809Z",
+      "updatedAt": "2026-03-02T14:37:12.107Z"
+    },
+    {
+      "id": "prod-002",
+      "name": "OPC Cement 50kg",
+      "category": "Cement",
+      "price": 420,
+      "unit": "per bag",
+      "stock": 315,
+      "minStock": 40,
+      "status": "active",
+      "rating": 4.7,
+      "image": "/placeholder.svg?key=cement1",
+      "sellerId": "seed-seller-2",
+      "sellerName": "UltraTech",
+      "createdAt": "2026-03-02T14:36:48.809Z",
+      "updatedAt": "2026-03-02T14:37:12.108Z"
+    },
+    {
+      "id": "prod-003",
+      "name": "River Sand",
+      "category": "Sand",
+      "price": 1200,
+      "unit": "per ton",
+      "stock": 90,
+      "minStock": 15,
+      "status": "active",
+      "rating": 4.6,
+      "image": "/placeholder.svg?key=sand1",
+      "sellerId": "seed-seller-3",
+      "sellerName": "Local Sand Supplier",
+      "createdAt": "2026-03-02T14:36:48.809Z",
+      "updatedAt": "2026-03-02T14:36:48.809Z"
+    }
+  ],
+  "orders": [
+    {
+      "id": "4f428112-4301-49d4-90e9-1c7d3731b2e5",
+      "orderNumber": "ORD-2026-7583",
+      "buyerId": "dcf082fa-3aea-4190-9930-b6ff05a662b3",
+      "buyerName": "distributor",
+      "sellerId": "seed-seller-1",
+      "sellerName": "Delhi Brick Works",
+      "date": "2026-03-02T14:37:12.108Z",
+      "status": "confirmed",
+      "total": 11450,
+      "items": [
+        {
+          "productId": "prod-001",
+          "productName": "Premium Red Bricks",
+          "quantity": 1100,
+          "unitPrice": 8.5,
+          "lineTotal": 9350,
+          "sellerId": "seed-seller-1",
+          "sellerName": "Delhi Brick Works"
+        },
+        {
+          "productId": "prod-002",
+          "productName": "OPC Cement 50kg",
+          "quantity": 5,
+          "unitPrice": 420,
+          "lineTotal": 2100,
+          "sellerId": "seed-seller-2",
+          "sellerName": "UltraTech"
+        }
+      ],
+      "estimatedDelivery": "2026-03-06T14:37:12.108Z",
+      "trackingNumber": "TRK411167775"
+    }
+  ],
+  "payments": [
+    {
+      "id": "5530090b-6776-48bc-b192-b225e205d131",
+      "orderId": "4f428112-4301-49d4-90e9-1c7d3731b2e5",
+      "userId": "dcf082fa-3aea-4190-9930-b6ff05a662b3",
+      "amount": 11450,
+      "method": "UPI",
+      "status": "paid",
+      "createdAt": "2026-03-02T14:37:12.108Z"
+    }
+  ]
+}

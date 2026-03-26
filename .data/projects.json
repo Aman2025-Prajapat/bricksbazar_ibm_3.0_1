@@ -1,0 +1,162 @@
+[
+  {
+    "id": "01820abc-e66a-41f3-99c4-8b68e6382131",
+    "userId": "dcf082fa-3aea-4190-9930-b6ff05a662b3",
+    "name": "Untitled Project",
+    "jsonLayout": {
+      "houseConfig": {
+        "totalSqFt": 1200,
+        "floors": 1,
+        "floorHeight": 10,
+        "rooms": [
+          {
+            "id": "room-pooja-1772676700811-1",
+            "type": "Pooja",
+            "floor": 0,
+            "x": 16.964916731037086,
+            "z": -13.091933384829668,
+            "w": 4,
+            "l": 4,
+            "h": 9,
+            "color": "#facc15",
+            "hasWindow": true
+          },
+          {
+            "id": "room-kitchen-1772676700811-2",
+            "type": "Kitchen",
+            "floor": 0,
+            "x": 14.964916731037084,
+            "z": 10.091933384829668,
+            "w": 8,
+            "l": 10,
+            "h": 10,
+            "color": "#f59e0b",
+            "hasWindow": true
+          },
+          {
+            "id": "room-bedroom-1772676700811-3",
+            "type": "Bedroom",
+            "floor": 0,
+            "x": -12.964916731037084,
+            "z": 9.091933384829668,
+            "w": 12,
+            "l": 12,
+            "h": 10,
+            "color": "#818cf8",
+            "hasWindow": true
+          },
+          {
+            "id": "room-living-1772676700811-4",
+            "type": "Living",
+            "floor": 0,
+            "x": 0.5350832689629101,
+            "z": 0.8080666151703284,
+            "w": 14,
+            "l": 16,
+            "h": 10,
+            "color": "#64748b",
+            "hasWindow": true
+          },
+          {
+            "id": "room-bathroom-1772676700811-5",
+            "type": "Bathroom",
+            "floor": 0,
+            "x": -10.26491673103709,
+            "z": -1.5919333848296715,
+            "w": 6,
+            "l": 8,
+            "h": 9,
+            "color": "#38bdf8",
+            "hasWindow": true
+          },
+          {
+            "id": "room-bathroom-1772676700812-6",
+            "type": "Bathroom",
+            "floor": 0,
+            "x": -10.26491673103709,
+            "z": -9.991933384829672,
+            "w": 6,
+            "l": 8,
+            "h": 9,
+            "color": "#38bdf8",
+            "hasWindow": true
+          },
+          {
+            "id": "room-store-1772676700812-7",
+            "type": "Store",
+            "floor": 0,
+            "x": 11.33508326896291,
+            "z": 0.8080666151703284,
+            "w": 6,
+            "l": 6,
+            "h": 9,
+            "color": "#a16207",
+            "hasWindow": true
+          }
+        ]
+      },
+      "requirements": {
+        "bedrooms": 1,
+        "kitchens": 1,
+        "bathrooms": 2,
+        "poojaRooms": 1,
+        "storeRooms": 1,
+        "verandahRooms": 0,
+        "includeStairs": false
+      },
+      "xray": false,
+      "vastuEnabled": true,
+      "plotFacing": "East",
+      "wallMaterial": "plaster",
+      "floorMaterial": "wood"
+    },
+    "calculatedMaterials": {
+      "marketRates": {
+        "brickPerPiece": 8.5,
+        "cementPerBag": 420,
+        "sandPerTon": 650,
+        "sourceCount": {
+          "bricks": 1,
+          "cement": 1,
+          "sand": 2
+        }
+      },
+      "ratesAsOf": "2026-03-05T02:09:35.213Z",
+      "boqTotals": {
+        "bricks": 11558,
+        "cementBags": 85
+      },
+      "boqCost": {
+        "bricksCost": 98243,
+        "cementCost": 35700,
+        "sandCost": 6500,
+        "total": 140443
+      },
+      "floorWiseCost": [
+        {
+          "floor": 0,
+          "cost": 1144600
+        }
+      ],
+      "totalStats": {
+        "gross": 596,
+        "stairs": 0,
+        "usable": 596,
+        "volume": 5960,
+        "netOuterWallArea": 1394.2740046346698,
+        "paintLiters": 29.279754097328066,
+        "brickEstimate": 1533.701405098137,
+        "carpetArea": 548.32,
+        "builtUpArea": 657.984,
+        "superBuiltUpArea": 789.5808000000001
+      },
+      "plumbingBonus": {
+        "stackedPairs": 0,
+        "bonusPercent": 0
+      },
+      "vastuScore": 25
+    },
+    "createdAt": "2026-03-05T02:09:18.205Z",
+    "updatedAt": "2026-03-05T02:12:16.078Z"
+  }
+]

@@ -1,0 +1,6 @@
+﻿{
+  "email": "smokeauth@example.com",
+  "password": "SmokePass@123",
+  "name": "Smoke Auth",
+  "role": "buyer"
+}
