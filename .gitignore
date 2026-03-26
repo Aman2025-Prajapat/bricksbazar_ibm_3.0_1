@@ -4,3 +4,6 @@ node_modules/
 *.log
 .env
 .env.*
+.tmp*
+dev-auth-cookies.txt
+tsconfig.tsbuildinfo
