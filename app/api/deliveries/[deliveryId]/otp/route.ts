@@ -59,6 +59,14 @@ export async function POST(request: Request, { params }: { params: { deliveryId:
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
+  if (delivery.status === "delivered" || delivery.status === "cancelled") {
+    return NextResponse.json({ error: "OTP cannot be issued for completed or cancelled delivery" }, { status: 409 })
+  }
+
+  if (delivery.status === "pickup_ready") {
+    return NextResponse.json({ error: "Start transit before generating delivery OTP" }, { status: 409 })
+  }
+
   const body = await request.json().catch(() => ({}))
   const parsed = issueOtpSchema.safeParse(body)
   if (!parsed.success) {

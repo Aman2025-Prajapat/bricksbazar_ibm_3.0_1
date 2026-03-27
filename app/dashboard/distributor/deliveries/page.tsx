@@ -55,6 +55,21 @@ type DeliveryProof = {
   createdAt: string
 }
 
+type DeliveryAssignmentDraft = {
+  vehicleNumber: string
+  vehicleType: string
+  driverName: string
+  driverPhone: string
+}
+
+type DeliveryLocationDraft = {
+  lat: string
+  lng: string
+  speedKph: string
+  heading: string
+  address: string
+}
+
 function cleanPhoneForTel(value: string) {
   return value.replace(/[^0-9+]/g, "")
 }
@@ -80,6 +95,29 @@ function getPriority(orderTotal: number): "high" | "medium" | "low" {
   return "low"
 }
 
+function defaultAssignmentFromDelivery(delivery: DeliveryRecord): DeliveryAssignmentDraft {
+  return {
+    vehicleNumber: delivery.vehicleNumber === "Not Assigned" ? "" : delivery.vehicleNumber,
+    vehicleType: delivery.vehicleType || "Truck",
+    driverName: delivery.driverName === "Not Assigned" ? "" : delivery.driverName,
+    driverPhone: delivery.driverPhone,
+  }
+}
+
+function isAssignmentReady(draft: DeliveryAssignmentDraft) {
+  return draft.vehicleNumber.trim().length > 0 && draft.driverName.trim().length > 0 && draft.driverPhone.trim().length >= 7
+}
+
+function defaultLocationDraft(delivery: DeliveryRecord): DeliveryLocationDraft {
+  return {
+    lat: delivery.currentLat !== undefined ? String(delivery.currentLat) : "",
+    lng: delivery.currentLng !== undefined ? String(delivery.currentLng) : "",
+    speedKph: delivery.status === "in_transit" ? "40" : "0",
+    heading: "0",
+    address: delivery.currentAddress || delivery.deliveryAddress,
+  }
+}
+
 export default function DeliveriesPage() {
   const [deliveries, setDeliveries] = useState<DeliveryRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -96,6 +134,10 @@ export default function DeliveriesPage() {
   const [podNoteByDeliveryId, setPodNoteByDeliveryId] = useState<Record<string, string>>({})
   const [podImageUrlByDeliveryId, setPodImageUrlByDeliveryId] = useState<Record<string, string>>({})
   const [receivedByDeliveryId, setReceivedByDeliveryId] = useState<Record<string, string>>({})
+  const [assignmentByDeliveryId, setAssignmentByDeliveryId] = useState<Record<string, DeliveryAssignmentDraft>>({})
+  const [locationDraftByDeliveryId, setLocationDraftByDeliveryId] = useState<Record<string, DeliveryLocationDraft>>({})
+  const [savingAssignmentDeliveryId, setSavingAssignmentDeliveryId] = useState<string | null>(null)
+  const [uploadingPodDeliveryId, setUploadingPodDeliveryId] = useState<string | null>(null)
 
   const loadDeliveries = async (silent = false) => {
     if (!silent) {
@@ -183,6 +225,30 @@ export default function DeliveriesPage() {
     return () => {
       cancelled = true
     }
+  }, [deliveries])
+
+  useEffect(() => {
+    if (deliveries.length === 0) {
+      setAssignmentByDeliveryId({})
+      setLocationDraftByDeliveryId({})
+      return
+    }
+
+    setAssignmentByDeliveryId((current) => {
+      const next: Record<string, DeliveryAssignmentDraft> = {}
+      for (const delivery of deliveries) {
+        next[delivery.id] = current[delivery.id] || defaultAssignmentFromDelivery(delivery)
+      }
+      return next
+    })
+
+    setLocationDraftByDeliveryId((current) => {
+      const next: Record<string, DeliveryLocationDraft> = {}
+      for (const delivery of deliveries) {
+        next[delivery.id] = current[delivery.id] || defaultLocationDraft(delivery)
+      }
+      return next
+    })
   }, [deliveries])
 
   const filteredDeliveries = useMemo(
@@ -277,11 +343,111 @@ export default function DeliveriesPage() {
     }
   }
 
+  const updateAssignmentField = (
+    deliveryId: string,
+    key: keyof DeliveryAssignmentDraft,
+    value: string,
+  ) => {
+    setAssignmentByDeliveryId((current) => ({
+      ...current,
+      [deliveryId]: {
+        ...(current[deliveryId] || { vehicleNumber: "", vehicleType: "Truck", driverName: "", driverPhone: "" }),
+        [key]: value,
+      },
+    }))
+  }
+
+  const updateLocationField = (deliveryId: string, key: keyof DeliveryLocationDraft, value: string) => {
+    setLocationDraftByDeliveryId((current) => ({
+      ...current,
+      [deliveryId]: {
+        ...(current[deliveryId] || { lat: "", lng: "", speedKph: "0", heading: "0", address: "" }),
+        [key]: value,
+      },
+    }))
+  }
+
+  const uploadPodImage = async (deliveryId: string, file: File | null) => {
+    if (!file) {
+      setError("Select POD image file first")
+      return
+    }
+
+    setUploadingPodDeliveryId(deliveryId)
+    setActionMessage("")
+    try {
+      const formData = new FormData()
+      formData.set("image", file)
+
+      const response = await fetch(`/api/deliveries/${deliveryId}/proof-upload`, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      })
+      const payload = (await response.json()) as { podImageUrl?: string; error?: string }
+      if (!response.ok || !payload.podImageUrl) {
+        throw new Error(payload.error || "Could not upload POD image")
+      }
+
+      setPodImageUrlByDeliveryId((current) => ({ ...current, [deliveryId]: payload.podImageUrl! }))
+      setActionMessage("POD image uploaded successfully.")
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "Could not upload POD image")
+    } finally {
+      setUploadingPodDeliveryId(null)
+    }
+  }
+
+  const saveAssignment = async (delivery: DeliveryRecord) => {
+    setSavingAssignmentDeliveryId(delivery.id)
+    setActionMessage("")
+    setError("")
+
+    try {
+      const draft = assignmentByDeliveryId[delivery.id] || defaultAssignmentFromDelivery(delivery)
+      const payload = {
+        vehicleNumber: draft.vehicleNumber.trim(),
+        vehicleType: draft.vehicleType.trim() || "Truck",
+        driverName: draft.driverName.trim(),
+        driverPhone: draft.driverPhone.trim(),
+      }
+
+      if (!isAssignmentReady(payload)) {
+        throw new Error("Vehicle number, driver name, and valid driver phone are required")
+      }
+
+      const response = await fetch(`/api/deliveries/${delivery.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      })
+      const data = (await response.json()) as { error?: string }
+      if (!response.ok) {
+        throw new Error(data.error || "Could not save assignment")
+      }
+
+      setActionMessage(`Assignment saved for ${delivery.orderNumber}`)
+      await loadDeliveries(true)
+    } catch (assignmentError) {
+      setError(assignmentError instanceof Error ? assignmentError.message : "Could not save assignment")
+    } finally {
+      setSavingAssignmentDeliveryId(null)
+    }
+  }
+
   const pushLivePing = async (delivery: DeliveryRecord) => {
-    const baseLat = delivery.currentLat ?? 28.6139
-    const baseLng = delivery.currentLng ?? 77.209
-    const lat = Number((baseLat + (Math.random() - 0.5) * 0.005).toFixed(6))
-    const lng = Number((baseLng + (Math.random() - 0.5) * 0.005).toFixed(6))
+    const draft = locationDraftByDeliveryId[delivery.id] || defaultLocationDraft(delivery)
+    const lat = Number.parseFloat(draft.lat)
+    const lng = Number.parseFloat(draft.lng)
+    const speedKph = Number.parseFloat(draft.speedKph || "0")
+    const heading = Number.parseFloat(draft.heading || "0")
+    const address = draft.address.trim() || delivery.currentAddress || delivery.deliveryAddress
+
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+      setError("Enter valid latitude/longitude before sharing live ping")
+      return
+    }
 
     try {
       const response = await fetch(`/api/deliveries/${delivery.id}/location`, {
@@ -291,9 +457,9 @@ export default function DeliveriesPage() {
         body: JSON.stringify({
           lat,
           lng,
-          address: delivery.currentAddress || delivery.deliveryAddress,
-          speedKph: delivery.status === "in_transit" ? 40 : 0,
-          heading: Math.floor(Math.random() * 360),
+          address,
+          speedKph: Number.isFinite(speedKph) ? speedKph : 0,
+          heading: Number.isFinite(heading) ? heading : 0,
           status: delivery.status,
         }),
       })
@@ -439,7 +605,10 @@ export default function DeliveriesPage() {
             const progress = getProgress(delivery.status)
             const isUpdating = updatingDeliveryId === delivery.id
             const isIssuingOtp = issuingOtpDeliveryId === delivery.id
+            const isSavingAssignment = savingAssignmentDeliveryId === delivery.id
             const alerts = alertsByDeliveryId[delivery.id] || []
+            const assignmentDraft = assignmentByDeliveryId[delivery.id] || defaultAssignmentFromDelivery(delivery)
+            const assignmentReady = isAssignmentReady(assignmentDraft)
 
             return (
               <Card key={delivery.id}>
@@ -506,6 +675,50 @@ export default function DeliveriesPage() {
                     </div>
                   </div>
 
+                  <div className="mb-4 border rounded-lg p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium">Order Assignment</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="bg-transparent"
+                        disabled={isSavingAssignment || delivery.status === "delivered" || delivery.status === "cancelled"}
+                        onClick={() => {
+                          void saveAssignment(delivery)
+                        }}
+                      >
+                        {isSavingAssignment ? "Saving..." : "Save Assignment"}
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <Input
+                        placeholder="Vehicle number"
+                        value={assignmentDraft.vehicleNumber}
+                        onChange={(event) => updateAssignmentField(delivery.id, "vehicleNumber", event.target.value.toUpperCase())}
+                      />
+                      <Input
+                        placeholder="Vehicle type"
+                        value={assignmentDraft.vehicleType}
+                        onChange={(event) => updateAssignmentField(delivery.id, "vehicleType", event.target.value)}
+                      />
+                      <Input
+                        placeholder="Driver name"
+                        value={assignmentDraft.driverName}
+                        onChange={(event) => updateAssignmentField(delivery.id, "driverName", event.target.value)}
+                      />
+                      <Input
+                        placeholder="Driver phone"
+                        value={assignmentDraft.driverPhone}
+                        onChange={(event) => updateAssignmentField(delivery.id, "driverPhone", event.target.value.replace(/[^0-9+]/g, ""))}
+                      />
+                    </div>
+                    {!assignmentReady ? (
+                      <p className="text-xs text-muted-foreground">
+                        Assign vehicle number, driver name, and phone before starting transit.
+                      </p>
+                    ) : null}
+                  </div>
+
                   {delivery.status !== "delivered" && delivery.status !== "cancelled" ? (
                     <div className="mb-4">
                       <div className="flex items-center justify-between text-sm mb-1">
@@ -565,13 +778,23 @@ export default function DeliveriesPage() {
                             setReceivedByDeliveryId((current) => ({ ...current, [delivery.id]: event.target.value }))
                           }
                         />
-                        <Input
-                          placeholder="POD image URL (optional)"
-                          value={podImageUrlByDeliveryId[delivery.id] || ""}
-                          onChange={(event) =>
-                            setPodImageUrlByDeliveryId((current) => ({ ...current, [delivery.id]: event.target.value }))
-                          }
-                        />
+                        <div className="space-y-2">
+                          <Input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0] || null
+                              void uploadPodImage(delivery.id, file)
+                            }}
+                          />
+                          {podImageUrlByDeliveryId[delivery.id] ? (
+                            <p className="text-xs text-muted-foreground truncate">
+                              Uploaded POD: {podImageUrlByDeliveryId[delivery.id]}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">Upload PNG/JPG/WEBP (max 5MB)</p>
+                          )}
+                        </div>
                         <Input
                           placeholder="POD note (optional)"
                           value={podNoteByDeliveryId[delivery.id] || ""}
@@ -580,8 +803,45 @@ export default function DeliveriesPage() {
                           }
                         />
                       </div>
+                      {uploadingPodDeliveryId === delivery.id ? (
+                        <p className="text-xs text-muted-foreground">Uploading POD...</p>
+                      ) : null}
                     </div>
                   ) : null}
+
+                  <div className="mb-4 border rounded-lg p-3 space-y-3">
+                    <p className="text-sm font-medium">Driver GPS Ping</p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <Input
+                        placeholder="Latitude"
+                        value={(locationDraftByDeliveryId[delivery.id] || defaultLocationDraft(delivery)).lat}
+                        onChange={(event) => updateLocationField(delivery.id, "lat", event.target.value)}
+                      />
+                      <Input
+                        placeholder="Longitude"
+                        value={(locationDraftByDeliveryId[delivery.id] || defaultLocationDraft(delivery)).lng}
+                        onChange={(event) => updateLocationField(delivery.id, "lng", event.target.value)}
+                      />
+                      <Input
+                        placeholder="Address"
+                        value={(locationDraftByDeliveryId[delivery.id] || defaultLocationDraft(delivery)).address}
+                        onChange={(event) => updateLocationField(delivery.id, "address", event.target.value)}
+                      />
+                      <Input
+                        placeholder="Speed (km/h)"
+                        value={(locationDraftByDeliveryId[delivery.id] || defaultLocationDraft(delivery)).speedKph}
+                        onChange={(event) => updateLocationField(delivery.id, "speedKph", event.target.value)}
+                      />
+                      <Input
+                        placeholder="Heading (0-360)"
+                        value={(locationDraftByDeliveryId[delivery.id] || defaultLocationDraft(delivery)).heading}
+                        onChange={(event) => updateLocationField(delivery.id, "heading", event.target.value)}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Use real driver-app GPS data or device feed values. Random location simulation removed.
+                    </p>
+                  </div>
 
                   <div className="flex gap-2 pt-4 border-t flex-wrap">
                     <Button variant="outline" size="sm" className="gap-2 bg-transparent" onClick={() => openNavigation(delivery)}>
@@ -596,25 +856,31 @@ export default function DeliveriesPage() {
                       <MessageSquare className="h-4 w-4" />
                       Message Customer
                     </Button>
-                    <Button variant="outline" size="sm" className="gap-2 bg-transparent" onClick={() => pushLivePing(delivery)}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 bg-transparent"
+                      disabled={delivery.status === "delivered" || delivery.status === "cancelled"}
+                      onClick={() => pushLivePing(delivery)}
+                    >
                       <LocateFixed className="h-4 w-4" />
                       Share Live Ping
                     </Button>
 
                     {delivery.status === "pickup_ready" ? (
-                      <Button size="sm" disabled={isUpdating} onClick={() => updateStatus(delivery, "in_transit")}>
+                      <Button size="sm" disabled={isUpdating || !assignmentReady} onClick={() => updateStatus(delivery, "in_transit")}>
                         {isUpdating ? "Updating..." : "Start Pickup"}
                       </Button>
                     ) : null}
 
                     {delivery.status === "in_transit" ? (
-                      <Button size="sm" disabled={isUpdating} onClick={() => updateStatus(delivery, "nearby")}>
+                      <Button size="sm" disabled={isUpdating || !assignmentReady} onClick={() => updateStatus(delivery, "nearby")}>
                         {isUpdating ? "Updating..." : "Mark Nearby"}
                       </Button>
                     ) : null}
 
                     {(delivery.status === "in_transit" || delivery.status === "nearby") ? (
-                      <Button size="sm" disabled={isUpdating} onClick={() => updateStatus(delivery, "delivered")}>
+                      <Button size="sm" disabled={isUpdating || !assignmentReady} onClick={() => updateStatus(delivery, "delivered")}>
                         {isUpdating ? "Updating..." : "Mark Delivered"}
                       </Button>
                     ) : null}

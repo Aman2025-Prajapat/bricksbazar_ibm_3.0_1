@@ -29,6 +29,10 @@ type ApiOrder = {
   date: string
   estimatedDelivery: string
   trackingNumber?: string
+  deliveryAddress?: string
+  distributorName?: string
+  deliveryStatus?: "pickup_ready" | "in_transit" | "nearby" | "delivered" | "cancelled"
+  vehicleType?: string
   items: ApiOrderItem[]
 }
 
@@ -50,6 +54,7 @@ export default function SellerOrdersPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedStatus, setSelectedStatus] = useState("all")
   const [trackingOrderId, setTrackingOrderId] = useState<string | null>(null)
+  const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null)
 
   const statuses = ["all", "pending", "confirmed", "shipped", "delivered", "cancelled"]
 
@@ -83,6 +88,15 @@ export default function SellerOrdersPage() {
       cancelled = true
     }
   }, [])
+
+  const reloadOrders = async () => {
+    const response = await fetch("/api/orders", { credentials: "include", cache: "no-store" })
+    const payload = (await response.json()) as { orders?: ApiOrder[]; error?: string }
+    if (!response.ok || !payload.orders) {
+      throw new Error(payload.error || "Could not load orders")
+    }
+    setOrders(payload.orders)
+  }
 
   const getStatusColor = (status: OrderStatus) => {
     if (status === "cancelled") return "destructive" as const
@@ -134,6 +148,28 @@ export default function SellerOrdersPage() {
       setError(trackingError instanceof Error ? trackingError.message : "Could not open live tracking")
     } finally {
       setTrackingOrderId(null)
+    }
+  }
+
+  const updateOrderStatus = async (orderId: string, status: "confirmed" | "shipped" | "delivered" | "cancelled") => {
+    setUpdatingOrderId(orderId)
+    setError("")
+    try {
+      const response = await fetch(`/api/orders/${orderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ status }),
+      })
+      const payload = (await response.json()) as { error?: string }
+      if (!response.ok) {
+        throw new Error(payload.error || "Could not update order")
+      }
+      await reloadOrders()
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Could not update order")
+    } finally {
+      setUpdatingOrderId(null)
     }
   }
 
@@ -239,6 +275,18 @@ export default function SellerOrdersPage() {
                       <p>
                         <span className="text-muted-foreground">Tracking:</span> {order.trackingNumber || "Not assigned"}
                       </p>
+                      <p>
+                        <span className="text-muted-foreground">Delivery Address:</span>{" "}
+                        {order.deliveryAddress || "Awaiting buyer confirmation"}
+                      </p>
+                      <p>
+                        <span className="text-muted-foreground">Distributor:</span>{" "}
+                        {order.distributorName || "Pending assignment"} | {order.vehicleType || "Vehicle pending"}
+                      </p>
+                      <p>
+                        <span className="text-muted-foreground">Live Delivery Status:</span>{" "}
+                        {(order.deliveryStatus || "pickup_ready").replace("_", " ")}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -262,6 +310,16 @@ export default function SellerOrdersPage() {
                     {trackingOrderId === order.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Navigation className="h-4 w-4" />}
                     Track Live
                   </Button>
+                  {order.status === "pending" ? (
+                    <Button size="sm" disabled={updatingOrderId === order.id} onClick={() => updateOrderStatus(order.id, "confirmed")}>
+                      {updatingOrderId === order.id ? "Updating..." : "Confirm Order"}
+                    </Button>
+                  ) : null}
+                  {order.status === "confirmed" ? (
+                    <Button size="sm" disabled={updatingOrderId === order.id} onClick={() => updateOrderStatus(order.id, "shipped")}>
+                      {updatingOrderId === order.id ? "Updating..." : "Mark Shipped"}
+                    </Button>
+                  ) : null}
                 </div>
               </CardContent>
             </Card>

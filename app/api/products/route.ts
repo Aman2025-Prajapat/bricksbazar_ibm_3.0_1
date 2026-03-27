@@ -1,6 +1,6 @@
 ﻿import { NextResponse } from "next/server"
 import { z } from "zod"
-import { createProduct, listProducts } from "@/lib/server/market-store"
+import { createProduct, listProductsPaginated } from "@/lib/server/market-store"
 import { getSessionUser } from "@/lib/server/auth-user"
 
 const createProductSchema = z.object({
@@ -24,31 +24,32 @@ export async function GET(request: Request) {
   const category = (url.searchParams.get("category") || "all").trim().toLowerCase()
   const scope = (url.searchParams.get("scope") || "").trim().toLowerCase()
   const userId = (url.searchParams.get("userId") || "").trim()
+  const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1)
+  const defaultLimit = scope === "all" ? 300 : 25
+  const limit = Math.min(500, Math.max(1, Number.parseInt(url.searchParams.get("limit") || String(defaultLimit), 10) || defaultLimit))
 
-  let products = await listProducts()
+  const scopeSellerId =
+    sessionUser.role === "seller" && scope !== "all"
+      ? sessionUser.userId
+      : sessionUser.role === "admin" && userId
+        ? userId
+        : undefined
 
-  if (sessionUser?.role === "seller" && scope !== "all") {
-    products = products.filter((product) => product.sellerId === sessionUser.userId)
-  }
+  const result = await listProductsPaginated({
+    page,
+    limit,
+    q,
+    category,
+    scopeSellerId,
+  })
 
-  if (sessionUser?.role === "admin" && userId) {
-    products = products.filter((product) => product.sellerId === userId)
-  }
-
-  if (q) {
-    products = products.filter(
-      (product) =>
-        product.name.toLowerCase().includes(q) ||
-        product.category.toLowerCase().includes(q) ||
-        product.sellerName.toLowerCase().includes(q),
-    )
-  }
-
-  if (category !== "all") {
-    products = products.filter((product) => product.category.toLowerCase() === category)
-  }
-
-  return NextResponse.json({ products })
+  return NextResponse.json({
+    products: result.items,
+    page: result.page,
+    limit: result.limit,
+    total: result.total,
+    hasNextPage: result.hasNextPage,
+  })
 }
 
 export async function POST(request: Request) {
@@ -74,4 +75,3 @@ export async function POST(request: Request) {
 
   return NextResponse.json({ product }, { status: 201 })
 }
-

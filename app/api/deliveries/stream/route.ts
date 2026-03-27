@@ -42,15 +42,21 @@ export async function GET(request: Request) {
   const stream = new ReadableStream({
     start(controller) {
       let closed = false
+      let lastPayload = ""
+      let sequence = 0
 
       const sendEvent = async () => {
         if (closed) return
         try {
           const deliveries = await getScopedDeliveries(sessionUser.userId, sessionUser.role)
+          const payload = JSON.stringify({ deliveries, timestamp: new Date().toISOString() })
+          if (payload === lastPayload) {
+            return
+          }
+          lastPayload = payload
+          sequence += 1
           controller.enqueue(
-            encoder.encode(
-              `event: deliveries\ndata: ${JSON.stringify({ deliveries, timestamp: new Date().toISOString() })}\n\n`,
-            ),
+            encoder.encode(`id: ${sequence}\nevent: deliveries\ndata: ${payload}\n\n`),
           )
         } catch {
           controller.enqueue(
@@ -67,7 +73,7 @@ export async function GET(request: Request) {
       void sendEvent()
       const eventTimer = setInterval(() => {
         void sendEvent()
-      }, 3000)
+      }, 8000)
       const heartbeatTimer = setInterval(heartbeat, 12000)
 
       request.signal.addEventListener("abort", () => {

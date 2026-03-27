@@ -41,13 +41,38 @@ export async function GET(request: Request, { params }: { params: { deliveryId: 
 
 export async function POST(request: Request, { params }: { params: { deliveryId: string } }) {
   const sessionUser = await getSessionUser()
-  if (!sessionUser || (sessionUser.role !== "admin" && sessionUser.role !== "distributor")) {
+  if (!sessionUser) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const delivery = await getDeliveryById(params.deliveryId)
+  if (!delivery) {
+    return NextResponse.json({ error: "Delivery not found" }, { status: 404 })
+  }
+
+  const canWrite =
+    sessionUser.role === "admin" ||
+    sessionUser.role === "distributor" ||
+    (sessionUser.role === "seller" && delivery.sellerId === sessionUser.userId)
+  if (!canWrite) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
+
+  if (delivery.status === "delivered" || delivery.status === "cancelled") {
+    return NextResponse.json({ error: "Tracking is closed for this delivery" }, { status: 409 })
+  }
+
+  if (delivery.vehicleNumber === "Not Assigned" || delivery.driverName === "Not Assigned") {
+    return NextResponse.json({ error: "Assign vehicle and driver before sending live location" }, { status: 409 })
   }
 
   const parsed = createLocationSchema.safeParse(await request.json())
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid location payload" }, { status: 400 })
+  }
+
+  if (parsed.data.status === "delivered" || parsed.data.status === "cancelled") {
+    return NextResponse.json({ error: "Use delivery status API to complete or cancel delivery" }, { status: 400 })
   }
 
   const result = await appendDeliveryLocation({ deliveryId: params.deliveryId, ...parsed.data })

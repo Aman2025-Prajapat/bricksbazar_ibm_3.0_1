@@ -110,7 +110,7 @@ export default function BuyerProductsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Browse Products</h1>
-          <p className="text-muted-foreground">Explore verified construction materials from trusted suppliers</p>
+          <p className="text-muted-foreground">Explore Madhya Pradesh market-ready construction materials from verified suppliers</p>
         </div>
         <Link href="/dashboard/buyer/cart">
           <Button className="gap-2">

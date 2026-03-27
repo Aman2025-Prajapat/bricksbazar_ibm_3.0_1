@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Bell, Clock, CheckCircle, MapPin, Package, User, Calendar, Loader2 } from "lucide-react"
@@ -17,6 +18,9 @@ type ApiOrder = {
   status: "pending" | "confirmed" | "shipped" | "delivered" | "cancelled"
   date: string
   estimatedDelivery: string
+  deliveryAddress?: string
+  distributorName?: string
+  vehicleType?: string
   items: Array<{ productName: string; quantity: number }>
 }
 
@@ -36,13 +40,24 @@ type RequestRecord = {
   requestDate: string
   deadline: string
   estimatedValue: string
+  preferredDistributorName?: string
+  preferredVehicleType?: string
+}
+
+type PlanningDraft = {
+  estimatedDelivery: string
+  distributorName: string
+  vehicleType: string
+  vehicleNumber: string
+  driverName: string
+  driverPhone: string
 }
 
 function toRequestStatus(status: ApiOrder["status"]): RequestStatus {
   if (status === "cancelled") return "rejected"
   if (status === "delivered") return "completed"
   if (status === "shipped") return "in-progress"
-  if (status === "confirmed") return "pending"
+  if (status === "confirmed") return "accepted"
   return "pending"
 }
 
@@ -71,12 +86,14 @@ function mapOrderToRequest(order: ApiOrder): RequestRecord {
     fromType: "buyer",
     product: leadProduct,
     quantity: `${totalQuantity} units`,
-    location: `${order.buyerName} site`,
+    location: order.deliveryAddress || `${order.buyerName} site`,
     urgency: toUrgency(order.total),
     status: toRequestStatus(order.status),
     requestDate: new Date(order.date).toLocaleDateString(),
     deadline: new Date(order.estimatedDelivery).toLocaleDateString(),
     estimatedValue: `Rs. ${order.total.toLocaleString()}`,
+    preferredDistributorName: order.distributorName,
+    preferredVehicleType: order.vehicleType,
   }
 }
 
@@ -85,6 +102,7 @@ export default function RequestsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [planningByOrderId, setPlanningByOrderId] = useState<Record<string, PlanningDraft>>({})
 
   const loadOrders = async () => {
     setError("")
@@ -119,6 +137,28 @@ export default function RequestsPage() {
     () => requests.reduce((sum, request) => sum + Number(request.estimatedValue.replace(/[^0-9.]/g, "")), 0),
     [requests],
   )
+
+  useEffect(() => {
+    if (!orders.length) {
+      setPlanningByOrderId({})
+      return
+    }
+
+    setPlanningByOrderId((current) => {
+      const next: Record<string, PlanningDraft> = {}
+      for (const order of orders) {
+        next[order.id] = current[order.id] || {
+          estimatedDelivery: order.estimatedDelivery.slice(0, 10),
+          distributorName: order.distributorName || "MP Logistics Dispatch",
+          vehicleType: order.vehicleType || "Truck",
+          vehicleNumber: "",
+          driverName: "",
+          driverPhone: "",
+        }
+      }
+      return next
+    })
+  }, [orders])
 
   const getStatusBadge = (status: RequestStatus) => {
     if (status === "pending") {
@@ -167,7 +207,35 @@ export default function RequestsPage() {
     return <Badge variant="secondary">Low</Badge>
   }
 
-  const updateOrder = async (orderId: string, status: "shipped" | "cancelled" | "delivered") => {
+  const updatePlanningField = (orderId: string, key: keyof PlanningDraft, value: string) => {
+    setPlanningByOrderId((current) => ({
+      ...current,
+      [orderId]: {
+        ...(current[orderId] || {
+          estimatedDelivery: "",
+          distributorName: "MP Logistics Dispatch",
+          vehicleType: "Truck",
+          vehicleNumber: "",
+          driverName: "",
+          driverPhone: "",
+        }),
+        [key]: value,
+      },
+    }))
+  }
+
+  const updateOrder = async (
+    orderId: string,
+    requestBody: {
+      status: "confirmed" | "shipped" | "cancelled" | "delivered"
+      estimatedDelivery?: string
+      distributorName?: string
+      vehicleType?: string
+      vehicleNumber?: string
+      driverName?: string
+      driverPhone?: string
+    },
+  ) => {
     setUpdatingId(orderId)
     setError("")
     try {
@@ -175,11 +243,11 @@ export default function RequestsPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(requestBody),
       })
-      const payload = (await response.json()) as { error?: string }
+      const responsePayload = (await response.json()) as { error?: string }
       if (!response.ok) {
-        throw new Error(payload.error || "Could not update request")
+        throw new Error(responsePayload.error || "Could not update request")
       }
       await loadOrders()
     } catch (updateError) {
@@ -191,23 +259,60 @@ export default function RequestsPage() {
 
   const renderActionButtons = (request: RequestRecord) => {
     const disabled = updatingId === request.orderId
+    const planning = planningByOrderId[request.orderId]
+    const hasPlanningReady =
+      Boolean(planning?.estimatedDelivery) &&
+      Boolean(planning?.distributorName?.trim()) &&
+      Boolean(planning?.vehicleType?.trim()) &&
+      Boolean(planning?.vehicleNumber?.trim()) &&
+      Boolean(planning?.driverName?.trim()) &&
+      Boolean(planning?.driverPhone?.trim())
 
     if (request.status === "pending") {
       return (
         <div className="flex items-center space-x-2">
-          <Button size="sm" onClick={() => updateOrder(request.orderId, "shipped")} disabled={disabled}>
+          <Button
+            size="sm"
+            onClick={() =>
+              updateOrder(request.orderId, {
+                status: "confirmed",
+                estimatedDelivery: planning?.estimatedDelivery
+                  ? new Date(`${planning.estimatedDelivery}T09:00:00+05:30`).toISOString()
+                  : undefined,
+                distributorName: planning?.distributorName,
+                vehicleType: planning?.vehicleType,
+                vehicleNumber: planning?.vehicleNumber,
+                driverName: planning?.driverName,
+                driverPhone: planning?.driverPhone,
+              })
+            }
+            disabled={disabled || !hasPlanningReady}
+          >
             {disabled ? "Updating..." : "Accept"}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => updateOrder(request.orderId, "cancelled")} disabled={disabled}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => updateOrder(request.orderId, { status: "cancelled" })}
+            disabled={disabled}
+          >
             Decline
           </Button>
         </div>
       )
     }
 
+    if (request.status === "accepted") {
+      return (
+        <Button size="sm" onClick={() => updateOrder(request.orderId, { status: "shipped" })} disabled={disabled}>
+          {disabled ? "Updating..." : "Start Dispatch"}
+        </Button>
+      )
+    }
+
     if (request.status === "in-progress") {
       return (
-        <Button size="sm" onClick={() => updateOrder(request.orderId, "delivered")} disabled={disabled}>
+        <Button size="sm" onClick={() => updateOrder(request.orderId, { status: "delivered" })} disabled={disabled}>
           {disabled ? "Updating..." : "Mark Completed"}
         </Button>
       )
@@ -357,6 +462,9 @@ export default function RequestsPage() {
                 {pendingRequests.map((request) => (
                   <Card key={request.id}>
                     <CardContent className="pt-6">
+                      {(() => {
+                        const planning = planningByOrderId[request.orderId]
+                        return (
                       <div className="flex justify-between items-start gap-3">
                         <div className="space-y-2">
                           <div className="flex items-center gap-2">
@@ -377,19 +485,50 @@ export default function RequestsPage() {
                               Due: {request.deadline}
                             </div>
                           </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-2">
+                            <Input
+                              type="date"
+                              value={planning?.estimatedDelivery || ""}
+                              onChange={(event) => updatePlanningField(request.orderId, "estimatedDelivery", event.target.value)}
+                            />
+                            <Input
+                              placeholder="Distributor name"
+                              value={planning?.distributorName || ""}
+                              onChange={(event) => updatePlanningField(request.orderId, "distributorName", event.target.value)}
+                            />
+                            <Input
+                              placeholder="Vehicle type"
+                              value={planning?.vehicleType || ""}
+                              onChange={(event) => updatePlanningField(request.orderId, "vehicleType", event.target.value)}
+                            />
+                            <Input
+                              placeholder="Vehicle number"
+                              value={planning?.vehicleNumber || ""}
+                              onChange={(event) => updatePlanningField(request.orderId, "vehicleNumber", event.target.value.toUpperCase())}
+                            />
+                            <Input
+                              placeholder="Driver name"
+                              value={planning?.driverName || ""}
+                              onChange={(event) => updatePlanningField(request.orderId, "driverName", event.target.value)}
+                            />
+                            <Input
+                              placeholder="Driver phone"
+                              value={planning?.driverPhone || ""}
+                              onChange={(event) =>
+                                updatePlanningField(request.orderId, "driverPhone", event.target.value.replace(/[^0-9+]/g, ""))
+                              }
+                            />
+                          </div>
                         </div>
                         <div className="text-right">
                           <div className="text-lg font-semibold">{request.estimatedValue}</div>
                           <div className="flex gap-2 mt-2">
-                            <Button size="sm" onClick={() => updateOrder(request.orderId, "shipped")}>
-                              Accept
-                            </Button>
-                            <Button size="sm" variant="outline" onClick={() => updateOrder(request.orderId, "cancelled")}>
-                              Decline
-                            </Button>
+                            {renderActionButtons(request)}
                           </div>
                         </div>
                       </div>
+                        )
+                      })()}
                     </CardContent>
                   </Card>
                 ))}
@@ -416,9 +555,7 @@ export default function RequestsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     {getStatusBadge(request.status)}
-                    <Button size="sm" onClick={() => updateOrder(request.orderId, "delivered")}>
-                      Mark Completed
-                    </Button>
+                    {renderActionButtons(request)}
                   </div>
                 </div>
               ))}

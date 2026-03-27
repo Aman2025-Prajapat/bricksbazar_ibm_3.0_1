@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import type React from "react"
 
@@ -28,32 +28,30 @@ type ApiOrder = {
   status: "pending" | "confirmed" | "shipped" | "delivered" | "cancelled"
 }
 
-const STORAGE_KEY = "bb_distributor_locations_v1"
-
 const defaultLocations: LocationRecord[] = [
   {
     id: "loc-1",
-    name: "Downtown District",
-    address: "123 Main Street, Downtown",
-    radiusKm: 15,
+    name: "Bhopal Urban Zone",
+    address: "MP Nagar, Arera Colony and Kolar belt, Bhopal, Madhya Pradesh",
+    radiusKm: 18,
     status: "active",
-    deliveryTime: "2-4 hours",
+    deliveryTime: "2-5 hours",
   },
   {
     id: "loc-2",
-    name: "Industrial Zone",
-    address: "456 Industrial Ave, Zone B",
-    radiusKm: 25,
+    name: "Indore-Pithampur Corridor",
+    address: "Vijay Nagar, Dewas Naka and Pithampur Industrial Area, Indore, Madhya Pradesh",
+    radiusKm: 30,
     status: "active",
-    deliveryTime: "4-6 hours",
+    deliveryTime: "4-8 hours",
   },
   {
     id: "loc-3",
-    name: "North Side",
-    address: "789 North Road, Sector 5",
+    name: "Jabalpur-Rewa Belt",
+    address: "Madan Mahal, Katangi Road and Rewa city zone, Madhya Pradesh",
     radiusKm: 20,
     status: "maintenance",
-    deliveryTime: "6-8 hours",
+    deliveryTime: "6-10 hours",
   },
 ]
 
@@ -71,9 +69,10 @@ function assignLocation(orderId: string, locationsLength: number) {
 }
 
 export default function LocationManagementPage() {
-  const [locations, setLocations] = useState<LocationRecord[]>(defaultLocations)
+  const [locations, setLocations] = useState<LocationRecord[]>([])
   const [orders, setOrders] = useState<ApiOrder[]>([])
   const [loadingOrders, setLoadingOrders] = useState(true)
+  const [loadingLocations, setLoadingLocations] = useState(true)
   const [error, setError] = useState("")
   const [query, setQuery] = useState("")
   const [showForm, setShowForm] = useState(false)
@@ -86,31 +85,43 @@ export default function LocationManagementPage() {
     status: "active" as LocationStatus,
   })
 
-  useEffect(() => {
-    if (typeof window === "undefined") return
+  const loadLocations = async () => {
+    setLoadingLocations(true)
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY)
-      if (raw) {
-        const parsed = JSON.parse(raw) as LocationRecord[]
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setLocations(parsed)
+      const response = await fetch("/api/distributor/locations", { credentials: "include", cache: "no-store" })
+      const payload = (await response.json()) as { locations?: LocationRecord[]; error?: string }
+      if (!response.ok || !payload.locations) {
+        throw new Error(payload.error || "Could not load locations")
+      }
+      setLocations(payload.locations.length > 0 ? payload.locations : defaultLocations)
+
+      if (payload.locations.length === 0) {
+        for (const fallback of defaultLocations) {
+          await fetch("/api/distributor/locations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify(fallback),
+          })
+        }
+        const seeded = await fetch("/api/distributor/locations", { credentials: "include", cache: "no-store" })
+        const seededPayload = (await seeded.json()) as { locations?: LocationRecord[] }
+        if (seeded.ok && seededPayload.locations) {
+          setLocations(seededPayload.locations)
         }
       }
-    } catch {
-      // ignore parse/storage errors
-    }
-  }, [])
-
-  const persistLocations = (nextLocations: LocationRecord[]) => {
-    setLocations(nextLocations)
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextLocations))
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not load locations")
+      setLocations(defaultLocations)
+    } finally {
+      setLoadingLocations(false)
     }
   }
 
   const loadOrders = async () => {
+    setLoadingOrders(true)
     try {
-      const response = await fetch("/api/orders", { credentials: "include", cache: "no-store" })
+      const response = await fetch("/api/orders?limit=200", { credentials: "include", cache: "no-store" })
       const payload = (await response.json()) as { orders?: ApiOrder[]; error?: string }
       if (!response.ok || !payload.orders) {
         throw new Error(payload.error || "Could not load location analytics")
@@ -124,7 +135,7 @@ export default function LocationManagementPage() {
   }
 
   useEffect(() => {
-    loadOrders()
+    void Promise.all([loadLocations(), loadOrders()])
   }, [])
 
   const metricsByLocation = useMemo(() => {
@@ -204,7 +215,27 @@ export default function LocationManagementPage() {
     setShowForm(true)
   }
 
-  const handleSaveLocation = (event: React.FormEvent) => {
+  const saveLocation = async (payload: {
+    id?: string
+    name: string
+    address: string
+    radiusKm: number
+    deliveryTime: string
+    status: LocationStatus
+  }) => {
+    const response = await fetch("/api/distributor/locations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(payload),
+    })
+    const body = (await response.json()) as { error?: string }
+    if (!response.ok) {
+      throw new Error(body.error || "Could not save location")
+    }
+  }
+
+  const handleSaveLocation = async (event: React.FormEvent) => {
     event.preventDefault()
     const radiusKm = Number(form.radiusKm)
     if (!form.name.trim() || !form.address.trim() || !form.deliveryTime.trim() || !Number.isFinite(radiusKm) || radiusKm <= 0) {
@@ -212,39 +243,50 @@ export default function LocationManagementPage() {
       return
     }
 
-    const normalized: LocationRecord = {
-      id: editingLocationId || crypto.randomUUID(),
-      name: form.name.trim(),
-      address: form.address.trim(),
-      radiusKm,
-      deliveryTime: form.deliveryTime.trim(),
-      status: form.status,
+    try {
+      await saveLocation({
+        id: editingLocationId || undefined,
+        name: form.name.trim(),
+        address: form.address.trim(),
+        radiusKm,
+        deliveryTime: form.deliveryTime.trim(),
+        status: form.status,
+      })
+      await loadLocations()
+      setError("")
+      resetForm()
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save location")
     }
-
-    if (editingLocationId) {
-      const next = locations.map((location) => (location.id === editingLocationId ? normalized : location))
-      persistLocations(next)
-    } else {
-      persistLocations([normalized, ...locations])
-    }
-
-    setError("")
-    resetForm()
   }
 
-  const removeLocation = (locationId: string) => {
-    const next = locations.filter((location) => location.id !== locationId)
-    persistLocations(next)
+  const removeLocation = async (locationId: string) => {
+    try {
+      const response = await fetch("/api/distributor/locations", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ id: locationId }),
+      })
+      const payload = (await response.json()) as { error?: string }
+      if (!response.ok) {
+        throw new Error(payload.error || "Could not delete location")
+      }
+      await loadLocations()
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Could not delete location")
+    }
   }
 
-  const toggleStatus = (locationId: string) => {
-    const next = locations.map((location) => {
-      if (location.id !== locationId) return location
-      const status: LocationStatus =
-        location.status === "active" ? "maintenance" : location.status === "maintenance" ? "inactive" : "active"
-      return { ...location, status }
-    })
-    persistLocations(next)
+  const toggleStatus = async (location: LocationRecord) => {
+    const status: LocationStatus =
+      location.status === "active" ? "maintenance" : location.status === "maintenance" ? "inactive" : "active"
+    try {
+      await saveLocation({ ...location, status })
+      await loadLocations()
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : "Could not update location status")
+    }
   }
 
   const getStatusBadge = (status: LocationStatus) => {
@@ -261,7 +303,13 @@ export default function LocationManagementPage() {
           <p className="text-muted-foreground">Manage service zones with live performance insights</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={loadOrders} className="bg-transparent">
+          <Button
+            variant="outline"
+            onClick={() => {
+              void Promise.all([loadLocations(), loadOrders()])
+            }}
+            className="bg-transparent"
+          >
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh Metrics
           </Button>
@@ -350,7 +398,7 @@ export default function LocationManagementPage() {
                     id="name"
                     value={form.name}
                     onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
-                    placeholder="e.g., Downtown District"
+                    placeholder="e.g., Gwalior City Zone"
                   />
                 </div>
                 <div className="space-y-2">
@@ -415,7 +463,7 @@ export default function LocationManagementPage() {
           <CardDescription>Manage zone status and review live workload by location</CardDescription>
         </CardHeader>
         <CardContent>
-          {loadingOrders ? (
+          {loadingOrders || loadingLocations ? (
             <div className="py-10 text-muted-foreground flex items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin mr-2" />
               Loading location analytics...
@@ -454,10 +502,10 @@ export default function LocationManagementPage() {
                           <Button variant="ghost" size="sm" onClick={() => openEditForm(location)}>
                             <Edit className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => toggleStatus(location.id)}>
+                          <Button variant="ghost" size="sm" onClick={() => void toggleStatus(location)}>
                             <RefreshCw className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => removeLocation(location.id)}>
+                          <Button variant="ghost" size="sm" onClick={() => void removeLocation(location.id)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -469,7 +517,7 @@ export default function LocationManagementPage() {
             </Table>
           )}
 
-          {!loadingOrders && visibleLocations.length === 0 && (
+          {!loadingOrders && !loadingLocations && visibleLocations.length === 0 && (
             <div className="py-10 text-center text-muted-foreground">No locations match your search.</div>
           )}
         </CardContent>

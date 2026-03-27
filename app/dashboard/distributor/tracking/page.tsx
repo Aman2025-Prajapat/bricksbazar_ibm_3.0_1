@@ -36,6 +36,7 @@ export default function LiveTrackingPage() {
   const [error, setError] = useState("")
   const [actionMessage, setActionMessage] = useState("")
   const [streamConnected, setStreamConnected] = useState(false)
+  const [focusedDeliveryId, setFocusedDeliveryId] = useState<string | null>(null)
 
   const loadDeliveries = async (silent = false) => {
     if (!silent) {
@@ -93,9 +94,40 @@ export default function LiveTrackingPage() {
     [deliveries],
   )
 
+  useEffect(() => {
+    if (activeDeliveries.length === 0) {
+      setFocusedDeliveryId(null)
+      return
+    }
+    if (!focusedDeliveryId || !activeDeliveries.some((delivery) => delivery.id === focusedDeliveryId)) {
+      setFocusedDeliveryId(activeDeliveries[0].id)
+    }
+  }, [activeDeliveries, focusedDeliveryId])
+
+  const focusedDelivery = useMemo(
+    () => activeDeliveries.find((delivery) => delivery.id === focusedDeliveryId) || activeDeliveries[0] || null,
+    [activeDeliveries, focusedDeliveryId],
+  )
+
+  const focusedMapEmbedUrl = useMemo(() => {
+    if (!focusedDelivery || focusedDelivery.currentLat === undefined || focusedDelivery.currentLng === undefined) {
+      return null
+    }
+
+    const lat = focusedDelivery.currentLat
+    const lng = focusedDelivery.currentLng
+    const delta = 0.02
+    const bboxLeft = (lng - delta).toFixed(6)
+    const bboxBottom = (lat - delta).toFixed(6)
+    const bboxRight = (lng + delta).toFixed(6)
+    const bboxTop = (lat + delta).toFixed(6)
+    return `https://www.openstreetmap.org/export/embed.html?bbox=${bboxLeft}%2C${bboxBottom}%2C${bboxRight}%2C${bboxTop}&layer=mapnik&marker=${lat}%2C${lng}`
+  }, [focusedDelivery])
+
   const vehicleRows = useMemo(
     () =>
       activeDeliveries.map((delivery) => ({
+        deliveryId: delivery.id,
         id: delivery.vehicleNumber,
         driver: delivery.driverName,
         status: delivery.status,
@@ -110,10 +142,13 @@ export default function LiveTrackingPage() {
   )
 
   const pushLivePing = async (delivery: DeliveryRecord) => {
-    const baseLat = delivery.currentLat ?? 28.6139
-    const baseLng = delivery.currentLng ?? 77.209
-    const lat = Number((baseLat + (Math.random() - 0.5) * 0.004).toFixed(6))
-    const lng = Number((baseLng + (Math.random() - 0.5) * 0.004).toFixed(6))
+    if (delivery.currentLat === undefined || delivery.currentLng === undefined) {
+      setError("No driver GPS feed yet for this delivery. Use Driver API/app to push location.")
+      return
+    }
+
+    const lat = delivery.currentLat
+    const lng = delivery.currentLng
 
     try {
       const response = await fetch(`/api/deliveries/${delivery.id}/location`, {
@@ -125,7 +160,7 @@ export default function LiveTrackingPage() {
           lng,
           address: delivery.currentAddress || delivery.deliveryAddress,
           speedKph: delivery.status === "in_transit" ? 42 : 12,
-          heading: Math.floor(Math.random() * 360),
+          heading: 0,
           status: delivery.status,
         }),
       })
@@ -174,16 +209,27 @@ export default function LiveTrackingPage() {
           <CardDescription>Track all vehicles and deliveries in real-time</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="h-96 bg-muted rounded-lg flex items-center justify-center border-2 border-dashed">
-            {loading ? (
-              <div className="text-center text-muted-foreground">
+          {loading ? (
+            <div className="h-96 bg-muted rounded-lg flex items-center justify-center border-2 border-dashed text-center text-muted-foreground">
+              <div>
                 <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
                 Loading live vehicles...
               </div>
-            ) : (
-              <div className="text-center">
+            </div>
+          ) : focusedMapEmbedUrl ? (
+            <div className="space-y-3">
+              <div className="h-96 rounded-lg overflow-hidden border">
+                <iframe title="Live delivery map" src={focusedMapEmbedUrl} className="h-full w-full" loading="lazy" />
+              </div>
+              <div className="text-sm text-muted-foreground">
+                Focused on {focusedDelivery?.orderNumber} | {focusedDelivery?.currentAddress || focusedDelivery?.deliveryAddress}
+              </div>
+            </div>
+          ) : (
+            <div className="h-96 bg-muted rounded-lg flex items-center justify-center border-2 border-dashed text-center">
+              <div>
                 <MapPin className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-semibold mb-2">Live Delivery Snapshot</h3>
+                <h3 className="text-lg font-semibold mb-2">Live map waiting for first GPS ping</h3>
                 <p className="text-muted-foreground mb-4">
                   Active Deliveries: {activeDeliveries.length} | Total Tracked: {deliveries.length}
                 </p>
@@ -192,14 +238,18 @@ export default function LiveTrackingPage() {
                     <Navigation className="h-4 w-4 mr-2" />
                     Refresh Live
                   </Button>
-                  <Button variant="outline" className="bg-transparent" onClick={() => window.open("https://www.google.com/maps", "_blank", "noopener,noreferrer")}>
+                  <Button
+                    variant="outline"
+                    className="bg-transparent"
+                    onClick={() => window.open("https://www.google.com/maps", "_blank", "noopener,noreferrer")}
+                  >
                     <Route className="h-4 w-4 mr-2" />
                     Open Map
                   </Button>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -259,15 +309,25 @@ export default function LiveTrackingPage() {
                   <div className="flex items-center justify-between mt-3 pt-3 border-t text-sm">
                     <span>Speed: {vehicle.speed}</span>
                     <span>Fuel: {vehicle.fuel}</span>
-                    <Button variant="ghost" size="sm" onClick={() => {
-                      const delivery = activeDeliveries.find((item) => item.orderNumber === vehicle.delivery)
-                      if (delivery) {
-                        void pushLivePing(delivery)
-                      }
-                    }}>
-                      <LocateFixed className="h-4 w-4 mr-1" />
-                      Track Live
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => setFocusedDeliveryId(vehicle.deliveryId)}>
+                        <MapPin className="h-4 w-4 mr-1" />
+                        Focus Map
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          const delivery = activeDeliveries.find((item) => item.id === vehicle.deliveryId)
+                          if (delivery) {
+                            void pushLivePing(delivery)
+                          }
+                        }}
+                      >
+                        <LocateFixed className="h-4 w-4 mr-1" />
+                        Track Live
+                      </Button>
+                    </div>
                   </div>
                 </div>
               ))}

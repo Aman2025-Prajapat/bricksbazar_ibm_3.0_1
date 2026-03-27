@@ -32,6 +32,11 @@ interface Order {
   sellerName: string
   estimatedDelivery: string
   trackingNumber?: string
+  deliveryAddress?: string
+  pickupAddress?: string
+  distributorName?: string
+  deliveryStatus?: "pickup_ready" | "in_transit" | "nearby" | "delivered" | "cancelled"
+  vehicleType?: string
 }
 
 type Payment = {
@@ -106,6 +111,23 @@ function escapeHtml(input: string) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;")
+}
+
+function buildDeliveryTimeline(order: Order, trackingStatus?: DeliveryTracking["status"]) {
+  const effectiveStatus = trackingStatus || order.deliveryStatus || "pickup_ready"
+  const packedDone = order.status !== "cancelled"
+  const pickedDone = ["confirmed", "shipped", "delivered"].includes(order.status)
+  const inTransitDone = ["in_transit", "nearby", "delivered"].includes(effectiveStatus)
+  const nearYouDone = ["nearby", "delivered"].includes(effectiveStatus)
+  const deliveredDone = effectiveStatus === "delivered" || order.status === "delivered"
+
+  return [
+    { label: "Packed", done: packedDone },
+    { label: "Picked", done: pickedDone },
+    { label: "In Transit", done: inTransitDone },
+    { label: "Near You", done: nearYouDone },
+    { label: "Delivered", done: deliveredDone },
+  ]
 }
 
 export default function OrdersPage() {
@@ -209,8 +231,10 @@ export default function OrdersPage() {
     }
 
     let cancelled = false
-    const loadTracking = async () => {
-      setTrackingLoading(true)
+    const loadTracking = async (showLoader: boolean) => {
+      if (showLoader) {
+        setTrackingLoading(true)
+      }
       setTrackingError("")
       try {
         const response = await fetch(`/api/orders/${selectedOrderId}/tracking`, {
@@ -242,20 +266,30 @@ export default function OrdersPage() {
           )
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && showLoader) {
           setTrackingLoading(false)
         }
       }
     }
 
-    void loadTracking()
-    const timer = window.setInterval(() => {
-      void loadTracking()
-    }, 8000)
+    void loadTracking(true)
+    const source = new EventSource("/api/deliveries/stream")
+    source.addEventListener("deliveries", (event) => {
+      if (cancelled) return
+      try {
+        const payload = JSON.parse(event.data) as { deliveries?: Array<{ orderId: string }> }
+        const hasSelectedOrder = (payload.deliveries || []).some((delivery) => delivery.orderId === selectedOrderId)
+        if (hasSelectedOrder) {
+          void loadTracking(false)
+        }
+      } catch {
+        // Ignore malformed chunk and keep previous state.
+      }
+    })
 
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      source.close()
     }
   }, [selectedOrderId])
 
@@ -319,6 +353,20 @@ export default function OrdersPage() {
     window.open(url, "_blank", "noopener,noreferrer")
   }
 
+  const buyerMapEmbedUrl = useMemo(() => {
+    if (!selectedTracking || selectedTracking.currentLat === undefined || selectedTracking.currentLng === undefined) {
+      return null
+    }
+    const lat = selectedTracking.currentLat
+    const lng = selectedTracking.currentLng
+    const delta = 0.015
+    const bboxLeft = (lng - delta).toFixed(6)
+    const bboxBottom = (lat - delta).toFixed(6)
+    const bboxRight = (lng + delta).toFixed(6)
+    const bboxTop = (lat + delta).toFixed(6)
+    return `https://www.openstreetmap.org/export/embed.html?bbox=${bboxLeft}%2C${bboxBottom}%2C${bboxRight}%2C${bboxTop}&layer=mapnik&marker=${lat}%2C${lng}`
+  }, [selectedTracking])
+
   const issueOtp = async () => {
     if (!selectedTracking) return
     setIssuingOtp(true)
@@ -361,6 +409,9 @@ export default function OrdersPage() {
               <h3 className="font-semibold text-lg">{order.orderNumber}</h3>
               <p className="text-sm text-muted-foreground">Ordered on {new Date(order.date).toLocaleDateString()}</p>
               <p className="text-sm text-muted-foreground">from {order.sellerName}</p>
+              <p className="text-sm text-muted-foreground">
+                Distributor: {order.distributorName || "Pending assignment"}
+              </p>
             </div>
             <Badge variant={getStatusColor(order.status)} className="flex items-center gap-1">
               {getStatusIcon(order.status)}
@@ -368,7 +419,7 @@ export default function OrdersPage() {
             </Badge>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
             <div>
               <p className="text-sm text-muted-foreground">Total Amount</p>
               <p className="font-semibold">Rs. {order.total.toLocaleString()}</p>
@@ -386,9 +437,20 @@ export default function OrdersPage() {
               <p className="font-semibold text-xs">{order.trackingNumber || "Not assigned"}</p>
             </div>
             <div>
+              <p className="text-sm text-muted-foreground">Delivery Status</p>
+              <p className="font-semibold capitalize">{(order.deliveryStatus || "pickup_ready").replace("_", " ")}</p>
+            </div>
+            <div>
               <p className="text-sm text-muted-foreground">Payment</p>
               <div>{getPaymentBadge(payment?.status || "missing")}</div>
             </div>
+          </div>
+
+          <div className="mb-4 rounded-md border bg-muted/20 p-2 text-xs">
+            <p>
+              <span className="text-muted-foreground">Delivery Address:</span>{" "}
+              {order.deliveryAddress || "Address will be confirmed after assignment"}
+            </p>
           </div>
 
           <div className="flex gap-2 flex-wrap">
@@ -509,6 +571,19 @@ export default function OrdersPage() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <div className="p-3 border rounded-lg">
+                  <p className="text-muted-foreground mb-1">Delivery Address</p>
+                  <p className="font-medium">{selectedOrder.deliveryAddress || "Awaiting assignment"}</p>
+                </div>
+                <div className="p-3 border rounded-lg">
+                  <p className="text-muted-foreground mb-1">Distributor</p>
+                  <p className="font-medium">
+                    {selectedOrder.distributorName || "Not assigned"} | {selectedOrder.vehicleType || "Vehicle pending"}
+                  </p>
+                </div>
+              </div>
+
               <div className="border rounded-lg">
                 <div className="grid grid-cols-12 gap-2 p-3 text-xs font-semibold border-b bg-muted/40">
                   <div className="col-span-5">Item</div>
@@ -568,6 +643,9 @@ export default function OrdersPage() {
                 ) : (
                   <div className="space-y-3">
                     {trackingMessage ? <p className="text-xs text-green-700">{trackingMessage}</p> : null}
+                    {selectedOrder.status === "cancelled" ? (
+                      <p className="text-xs text-destructive">This order was cancelled, live movement is stopped.</p>
+                    ) : null}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
                       <div className="p-2 border rounded">
                         <p className="text-muted-foreground">Status</p>
@@ -596,6 +674,23 @@ export default function OrdersPage() {
                         {new Date(selectedTracking.updatedAt).toLocaleString()}
                       </p>
                     </div>
+                    <div className="rounded border p-2">
+                      <p className="text-xs text-muted-foreground mb-2">Delivery Timeline</p>
+                      <div className="flex flex-wrap gap-2">
+                        {buildDeliveryTimeline(selectedOrder, selectedTracking.status).map((step) => (
+                          <Badge key={step.label} variant={step.done ? "default" : "outline"}>
+                            {step.label}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                    {buyerMapEmbedUrl ? (
+                      <div className="rounded border overflow-hidden">
+                        <iframe title="Buyer live delivery map" src={buyerMapEmbedUrl} className="h-48 w-full" loading="lazy" />
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Live map will appear once driver shares GPS location.</p>
+                    )}
                     {trackingLocations.length > 0 ? (
                       <div className="space-y-1 border rounded p-2">
                         <p className="text-xs text-muted-foreground">Recent Location Updates</p>

@@ -30,7 +30,7 @@ export default function AddProductPage() {
     specifications: "",
   })
 
-  const categories = ["Cement", "Bricks", "Steel", "Sand", "Gravel", "Tiles", "Paint", "Tools", "Hardware", "Other"]
+  const categories = ["Cement", "Bricks", "Blocks", "Steel", "Sand", "Aggregates", "Concrete", "Tiles", "Tools", "Hardware", "Other"]
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()

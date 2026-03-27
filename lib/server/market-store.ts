@@ -3,6 +3,7 @@ import { prisma } from "@/lib/server/prisma"
 export type ProductStatus = "active" | "out_of_stock"
 export type OrderStatus = "pending" | "confirmed" | "shipped" | "delivered" | "cancelled"
 export type PaymentStatus = "pending" | "paid" | "failed"
+export type PaymentProvider = "razorpay" | "phonepe" | "manual"
 export type DeliveryStatus = "pickup_ready" | "in_transit" | "nearby" | "delivered" | "cancelled"
 
 export type Product = {
@@ -47,6 +48,21 @@ export type Order = {
   trackingNumber?: string
 }
 
+export type OrderShipmentStatus = "pending" | "confirmed" | "in_transit" | "delivered" | "cancelled"
+
+export type OrderShipment = {
+  id: string
+  orderId: string
+  sellerId: string
+  sellerName: string
+  amount: number
+  status: OrderShipmentStatus
+  trackingNumber?: string
+  estimatedDelivery: string
+  createdAt: string
+  updatedAt: string
+}
+
 export type Payment = {
   id: string
   orderId: string
@@ -54,7 +70,61 @@ export type Payment = {
   amount: number
   method: string
   status: PaymentStatus
+  provider?: PaymentProvider
+  paymentIntentId?: string
+  gatewayOrderId?: string
+  gatewayTransactionId?: string
+  gatewaySignature?: string
+  gatewayPayload?: string
+  verifiedAt?: string
   createdAt: string
+}
+
+export type PaymentIntentStatus = "pending" | "verified" | "failed" | "used"
+
+export type PaymentIntent = {
+  id: string
+  buyerId: string
+  provider: PaymentProvider
+  amount: number
+  currency: string
+  status: PaymentIntentStatus
+  gatewayOrderId?: string
+  gatewayTransactionId?: string
+  gatewaySignature?: string
+  gatewayPayload?: string
+  verifiedAt?: string
+  consumedAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type DistributorLocationStatus = "active" | "maintenance" | "inactive"
+
+export type DistributorLocation = {
+  id: string
+  distributorId: string
+  name: string
+  address: string
+  radiusKm: number
+  status: DistributorLocationStatus
+  deliveryTime: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type SupplierFavorite = {
+  userId: string
+  supplierName: string
+  createdAt: string
+}
+
+export type PaginatedResult<T> = {
+  items: T[]
+  total: number
+  page: number
+  limit: number
+  hasNextPage: boolean
 }
 
 export type Delivery = {
@@ -169,6 +239,19 @@ type OrderRow = {
   tracking_number: string | null
 }
 
+type OrderShipmentRow = {
+  id: string
+  order_id: string
+  seller_id: string
+  seller_name: string
+  amount: number
+  status: OrderShipmentStatus
+  tracking_number: string | null
+  estimated_delivery: string
+  created_at: string
+  updated_at: string
+}
+
 type PaymentRow = {
   id: string
   order_id: string
@@ -176,6 +259,48 @@ type PaymentRow = {
   amount: number
   method: string
   status: PaymentStatus
+  provider: PaymentProvider | null
+  payment_intent_id: string | null
+  gateway_order_id: string | null
+  gateway_transaction_id: string | null
+  gateway_signature: string | null
+  gateway_payload: string | null
+  verified_at: string | null
+  created_at: string
+}
+
+type PaymentIntentRow = {
+  id: string
+  buyer_id: string
+  provider: PaymentProvider
+  amount: number
+  currency: string
+  status: PaymentIntentStatus
+  gateway_order_id: string | null
+  gateway_transaction_id: string | null
+  gateway_signature: string | null
+  gateway_payload: string | null
+  verified_at: string | null
+  consumed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+type DistributorLocationRow = {
+  id: string
+  distributor_id: string
+  name: string
+  address: string
+  radius_km: number
+  status: DistributorLocationStatus
+  delivery_time: string
+  created_at: string
+  updated_at: string
+}
+
+type SupplierFavoriteRow = {
+  user_id: string
+  supplier_name: string
   created_at: string
 }
 
@@ -239,6 +364,47 @@ type DeliveryProofRow = {
 
 let marketTablesReady = false
 
+function isPostgresRuntime() {
+  const url = process.env.DATABASE_URL ?? ""
+  return /^(postgres|postgresql|prisma\+postgres):\/\//i.test(url.trim())
+}
+
+async function safeAddColumn(table: string, definition: string) {
+  const columnName = definition.trim().split(/\s+/)[0]
+  if (isPostgresRuntime()) {
+    const columns = await prisma.$queryRawUnsafe<Array<{ column_name: string }>>(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = ?
+         AND column_name = ?`,
+      table,
+      columnName,
+    )
+    if (columns.length > 0) {
+      return
+    }
+  } else {
+    const columns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(${table})`)
+    if (columns.some((column) => column.name === columnName)) {
+      return
+    }
+  }
+
+  await prisma.$executeRawUnsafe(`ALTER TABLE ${table} ADD COLUMN ${definition}`)
+}
+
+function normalizePagination(input?: { page?: number; limit?: number }) {
+  const page = Math.max(1, Math.floor(input?.page ?? 1))
+  const limit = Math.min(100, Math.max(1, Math.floor(input?.limit ?? 50)))
+  const offset = (page - 1) * limit
+  return { page, limit, offset }
+}
+
+function escapeLikeQuery(value: string) {
+  return value.replace(/[%_]/g, "\\$&")
+}
+
 function mapProduct(row: ProductRow): Product {
   return {
     id: row.id,
@@ -275,6 +441,21 @@ function mapOrder(row: OrderRow): Order {
   }
 }
 
+function mapOrderShipment(row: OrderShipmentRow): OrderShipment {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    sellerId: row.seller_id,
+    sellerName: row.seller_name,
+    amount: Number(row.amount),
+    status: row.status,
+    trackingNumber: row.tracking_number ?? undefined,
+    estimatedDelivery: row.estimated_delivery,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 function mapPayment(row: PaymentRow): Payment {
   return {
     id: row.id,
@@ -283,6 +464,54 @@ function mapPayment(row: PaymentRow): Payment {
     amount: Number(row.amount),
     method: row.method,
     status: row.status,
+    provider: row.provider ?? undefined,
+    paymentIntentId: row.payment_intent_id ?? undefined,
+    gatewayOrderId: row.gateway_order_id ?? undefined,
+    gatewayTransactionId: row.gateway_transaction_id ?? undefined,
+    gatewaySignature: row.gateway_signature ?? undefined,
+    gatewayPayload: row.gateway_payload ?? undefined,
+    verifiedAt: row.verified_at ?? undefined,
+    createdAt: row.created_at,
+  }
+}
+
+function mapPaymentIntent(row: PaymentIntentRow): PaymentIntent {
+  return {
+    id: row.id,
+    buyerId: row.buyer_id,
+    provider: row.provider,
+    amount: Number(row.amount),
+    currency: row.currency,
+    status: row.status,
+    gatewayOrderId: row.gateway_order_id ?? undefined,
+    gatewayTransactionId: row.gateway_transaction_id ?? undefined,
+    gatewaySignature: row.gateway_signature ?? undefined,
+    gatewayPayload: row.gateway_payload ?? undefined,
+    verifiedAt: row.verified_at ?? undefined,
+    consumedAt: row.consumed_at ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapDistributorLocation(row: DistributorLocationRow): DistributorLocation {
+  return {
+    id: row.id,
+    distributorId: row.distributor_id,
+    name: row.name,
+    address: row.address,
+    radiusKm: Number(row.radius_km),
+    status: row.status,
+    deliveryTime: row.delivery_time,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapSupplierFavorite(row: SupplierFavoriteRow): SupplierFavorite {
+  return {
+    userId: row.user_id,
+    supplierName: row.supplier_name,
     createdAt: row.created_at,
   }
 }
@@ -372,7 +601,63 @@ function toOrderStatus(deliveryStatus: DeliveryStatus): OrderStatus {
   return "confirmed"
 }
 
-function buildDefaultDeliveryFromOrder(order: Order, nowIso: string): Delivery {
+function toShipmentStatus(orderStatus: OrderStatus): OrderShipmentStatus {
+  if (orderStatus === "pending") return "pending"
+  if (orderStatus === "confirmed") return "confirmed"
+  if (orderStatus === "shipped") return "in_transit"
+  if (orderStatus === "delivered") return "delivered"
+  return "cancelled"
+}
+
+const mpSellerPickupAddressByName: Record<string, string> = {
+  "Indore Brick Udyog": "Sanwer Road Industrial Area, Indore, Madhya Pradesh",
+  "Bhopal Brick and Blocks": "Govindpura Industrial Area, Bhopal, Madhya Pradesh",
+  "Satpura Cement Depot": "Khamaria Industrial Belt, Jabalpur, Madhya Pradesh",
+  "Narmada Cement Traders": "Sethani Ghat Road, Narmadapuram, Madhya Pradesh",
+  "Malwa Steel Hub": "Pithampur Logistics Zone, Dhar, Madhya Pradesh",
+  "Bhopal Steel Syndicate": "Mandideep Industrial Area, Raisen, Madhya Pradesh",
+  "Narmada Sand and Aggregates": "Handia Yard, Harda, Madhya Pradesh",
+  "Rewa Aggregates and Stone": "Industrial Area, Rewa, Madhya Pradesh",
+  "Bhopal ReadyMix Concrete": "Bypass Concrete Hub, Bhopal, Madhya Pradesh",
+  "Ujjain Blocks and Pavers": "Dewas Road Industrial Cluster, Ujjain, Madhya Pradesh",
+}
+
+const mpBuyerDeliveryZones = [
+  "Vijay Nagar, Indore, Madhya Pradesh",
+  "Arera Colony, Bhopal, Madhya Pradesh",
+  "Napier Town, Jabalpur, Madhya Pradesh",
+  "Civil Lines, Gwalior, Madhya Pradesh",
+  "Shakti Nagar, Rewa, Madhya Pradesh",
+  "Shivpuri Link Road, Ujjain, Madhya Pradesh",
+]
+
+function stableIndex(seed: string, size: number) {
+  if (size <= 0) return 0
+  let hash = 0
+  for (let index = 0; index < seed.length; index++) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0
+  }
+  return hash % size
+}
+
+function buildDefaultDeliveryFromOrder(
+  order: Order,
+  nowIso: string,
+  options?: {
+    deliveryAddress?: string
+    distributorId?: string
+    distributorName?: string
+    vehicleType?: string
+  },
+): Delivery {
+  const pickupAddress =
+    mpSellerPickupAddressByName[order.sellerName] || `${order.sellerName}, Industrial Hub, Madhya Pradesh`
+  const deliveryZone = mpBuyerDeliveryZones[stableIndex(`${order.id}-${order.buyerName}`, mpBuyerDeliveryZones.length)]
+  const finalDeliveryAddress = options?.deliveryAddress?.trim() || `${order.buyerName}, ${deliveryZone}`
+  const finalDistributorId = options?.distributorId?.trim() || "mp-distributor-ops"
+  const finalDistributorName = options?.distributorName?.trim() || "MP Logistics Dispatch"
+  const finalVehicleType = options?.vehicleType?.trim() || "Truck"
+
   return {
     id: crypto.randomUUID(),
     orderId: order.id,
@@ -380,12 +665,12 @@ function buildDefaultDeliveryFromOrder(order: Order, nowIso: string): Delivery {
     buyerName: order.buyerName,
     sellerId: order.sellerId,
     sellerName: order.sellerName,
-    distributorId: "system-distributor",
-    distributorName: "Auto Dispatch",
-    pickupAddress: `${order.sellerName} Warehouse Hub`,
-    deliveryAddress: `${order.buyerName} Delivery Location`,
+    distributorId: finalDistributorId,
+    distributorName: finalDistributorName,
+    pickupAddress,
+    deliveryAddress: finalDeliveryAddress,
     vehicleNumber: "Not Assigned",
-    vehicleType: "Truck",
+    vehicleType: finalVehicleType,
     driverName: "Not Assigned",
     driverPhone: "",
     status: toDeliveryStatus(order.status),
@@ -402,66 +687,162 @@ function buildDefaultDeliveryFromOrder(order: Order, nowIso: string): Delivery {
 function getSeedProducts(now: string) {
   return [
     {
-      id: "prod-001",
-      name: "Premium Red Bricks",
+      id: "mp-prod-001",
+      name: "Fly Ash Bricks 9x4x3",
       category: "Bricks",
-      price: 8.5,
+      price: 6.8,
       unit: "per piece",
-      stock: 25000,
-      minStock: 5000,
-      status: "active" as const,
-      rating: 4.9,
-      image: "/placeholder.svg?key=brick1",
-      sellerId: "seed-seller-1",
-      sellerName: "Delhi Brick Works",
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "prod-002",
-      name: "OPC Cement 50kg",
-      category: "Cement",
-      price: 420,
-      unit: "per bag",
-      stock: 320,
-      minStock: 40,
-      status: "active" as const,
-      rating: 4.7,
-      image: "/placeholder.svg?key=cement1",
-      sellerId: "seed-seller-2",
-      sellerName: "UltraTech",
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "prod-003",
-      name: "River Sand",
-      category: "Sand",
-      price: 1200,
-      unit: "per ton",
-      stock: 90,
-      minStock: 15,
-      status: "active" as const,
-      rating: 4.6,
-      image: "/placeholder.svg?key=sand1",
-      sellerId: "seed-seller-3",
-      sellerName: "Local Sand Supplier",
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "prod-004",
-      name: "TMT Steel Fe500",
-      category: "Steel",
-      price: 62000,
-      unit: "per ton",
-      stock: 45,
-      minStock: 8,
+      stock: 45000,
+      minStock: 7000,
       status: "active" as const,
       rating: 4.8,
-      image: "/placeholder.svg?key=steel1",
-      sellerId: "seed-seller-4",
-      sellerName: "National Steel Mart",
+      image: "/placeholder.svg?key=mp-brick-1",
+      sellerId: "seed-mp-seller-1",
+      sellerName: "Bhopal Brick and Blocks",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "mp-prod-002",
+      name: "Clay Red Bricks Grade A",
+      category: "Bricks",
+      price: 7.9,
+      unit: "per piece",
+      stock: 36000,
+      minStock: 6000,
+      status: "active" as const,
+      rating: 4.7,
+      image: "/placeholder.svg?key=mp-brick-2",
+      sellerId: "seed-mp-seller-2",
+      sellerName: "Indore Brick Udyog",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "mp-prod-003",
+      name: "OPC Cement 53 Grade (50kg)",
+      category: "Cement",
+      price: 395,
+      unit: "per bag",
+      stock: 980,
+      minStock: 120,
+      status: "active" as const,
+      rating: 4.9,
+      image: "/placeholder.svg?key=mp-cement-1",
+      sellerId: "seed-mp-seller-3",
+      sellerName: "Satpura Cement Depot",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "mp-prod-004",
+      name: "PPC Cement (50kg)",
+      category: "Cement",
+      price: 365,
+      unit: "per bag",
+      stock: 760,
+      minStock: 100,
+      status: "active" as const,
+      rating: 4.6,
+      image: "/placeholder.svg?key=mp-cement-2",
+      sellerId: "seed-mp-seller-4",
+      sellerName: "Narmada Cement Traders",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "mp-prod-005",
+      name: "TMT Steel Fe500D 12mm",
+      category: "Steel",
+      price: 59800,
+      unit: "per ton",
+      stock: 110,
+      minStock: 18,
+      status: "active" as const,
+      rating: 4.8,
+      image: "/placeholder.svg?key=mp-steel-1",
+      sellerId: "seed-mp-seller-5",
+      sellerName: "Malwa Steel Hub",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "mp-prod-006",
+      name: "TMT Steel Fe550 16mm",
+      category: "Steel",
+      price: 62400,
+      unit: "per ton",
+      stock: 95,
+      minStock: 15,
+      status: "active" as const,
+      rating: 4.7,
+      image: "/placeholder.svg?key=mp-steel-2",
+      sellerId: "seed-mp-seller-6",
+      sellerName: "Bhopal Steel Syndicate",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "mp-prod-007",
+      name: "Narmada River Sand",
+      category: "Sand",
+      price: 1380,
+      unit: "per ton",
+      stock: 420,
+      minStock: 60,
+      status: "active" as const,
+      rating: 4.5,
+      image: "/placeholder.svg?key=mp-sand-1",
+      sellerId: "seed-mp-seller-7",
+      sellerName: "Narmada Sand and Aggregates",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "mp-prod-008",
+      name: "20mm Stone Aggregate",
+      category: "Aggregates",
+      price: 980,
+      unit: "per ton",
+      stock: 500,
+      minStock: 80,
+      status: "active" as const,
+      rating: 4.4,
+      image: "/placeholder.svg?key=mp-aggregate-1",
+      sellerId: "seed-mp-seller-8",
+      sellerName: "Rewa Aggregates and Stone",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "mp-prod-009",
+      name: "Ready Mix Concrete M20",
+      category: "Concrete",
+      price: 5400,
+      unit: "per cubic meter",
+      stock: 220,
+      minStock: 30,
+      status: "active" as const,
+      rating: 4.6,
+      image: "/placeholder.svg?key=mp-rmc-1",
+      sellerId: "seed-mp-seller-9",
+      sellerName: "Bhopal ReadyMix Concrete",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "mp-prod-010",
+      name: "Interlocking Paver Blocks 60mm",
+      category: "Blocks",
+      price: 42,
+      unit: "per piece",
+      stock: 18000,
+      minStock: 2500,
+      status: "active" as const,
+      rating: 4.5,
+      image: "/placeholder.svg?key=mp-paver-1",
+      sellerId: "seed-mp-seller-10",
+      sellerName: "Ujjain Blocks and Pavers",
       createdAt: now,
       updatedAt: now,
     },
@@ -508,6 +889,21 @@ async function ensureMarketTables() {
   `)
 
   await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS market_order_shipments (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      seller_id TEXT NOT NULL,
+      seller_name TEXT NOT NULL,
+      amount REAL NOT NULL,
+      status TEXT NOT NULL,
+      tracking_number TEXT,
+      estimated_delivery TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `)
+
+  await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS market_payments (
       id TEXT PRIMARY KEY,
       order_id TEXT NOT NULL,
@@ -515,7 +911,41 @@ async function ensureMarketTables() {
       amount REAL NOT NULL,
       method TEXT NOT NULL,
       status TEXT NOT NULL,
+      provider TEXT,
+      payment_intent_id TEXT,
+      gateway_order_id TEXT,
+      gateway_transaction_id TEXT,
+      gateway_signature TEXT,
+      gateway_payload TEXT,
+      verified_at TEXT,
       created_at TEXT NOT NULL
+    )
+  `)
+
+  await safeAddColumn("market_payments", "provider TEXT")
+  await safeAddColumn("market_payments", "payment_intent_id TEXT")
+  await safeAddColumn("market_payments", "gateway_order_id TEXT")
+  await safeAddColumn("market_payments", "gateway_transaction_id TEXT")
+  await safeAddColumn("market_payments", "gateway_signature TEXT")
+  await safeAddColumn("market_payments", "gateway_payload TEXT")
+  await safeAddColumn("market_payments", "verified_at TEXT")
+
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS market_payment_intents (
+      id TEXT PRIMARY KEY,
+      buyer_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      amount REAL NOT NULL,
+      currency TEXT NOT NULL,
+      status TEXT NOT NULL,
+      gateway_order_id TEXT,
+      gateway_transaction_id TEXT,
+      gateway_signature TEXT,
+      gateway_payload TEXT,
+      verified_at TEXT,
+      consumed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     )
   `)
 
@@ -585,34 +1015,56 @@ async function ensureMarketTables() {
     )
   `)
 
-  const rows = await prisma.$queryRawUnsafe<Array<{ count: number | bigint }>>(
-    "SELECT COUNT(*) AS count FROM market_products",
-  )
-  const count = rows.length ? Number(rows[0].count) : 0
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS market_distributor_locations (
+      id TEXT PRIMARY KEY,
+      distributor_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      address TEXT NOT NULL,
+      radius_km REAL NOT NULL,
+      status TEXT NOT NULL,
+      delivery_time TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `)
 
-  if (count === 0) {
-    const now = new Date().toISOString()
-    for (const product of getSeedProducts(now)) {
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO market_products
-         (id, name, category, price, unit, stock, min_stock, status, rating, image, seller_id, seller_name, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        product.id,
-        product.name,
-        product.category,
-        product.price,
-        product.unit,
-        product.stock,
-        product.minStock,
-        product.status,
-        product.rating,
-        product.image,
-        product.sellerId,
-        product.sellerName,
-        product.createdAt,
-        product.updatedAt,
-      )
-    }
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS market_supplier_favorites (
+      user_id TEXT NOT NULL,
+      supplier_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, supplier_name)
+    )
+  `)
+
+  // Remove legacy demo seed rows so MP-aligned catalog becomes the default baseline.
+  await prisma.$executeRawUnsafe(
+    "DELETE FROM market_products WHERE id IN ('prod-001', 'prod-002', 'prod-003', 'prod-004')",
+  )
+
+  const now = new Date().toISOString()
+  for (const product of getSeedProducts(now)) {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO market_products
+       (id, name, category, price, unit, stock, min_stock, status, rating, image, seller_id, seller_name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO NOTHING`,
+      product.id,
+      product.name,
+      product.category,
+      product.price,
+      product.unit,
+      product.stock,
+      product.minStock,
+      product.status,
+      product.rating,
+      product.image,
+      product.sellerId,
+      product.sellerName,
+      product.createdAt,
+      product.updatedAt,
+    )
   }
 
   const missingDeliveryOrders = await prisma.$queryRawUnsafe<OrderRow[]>(
@@ -657,15 +1109,118 @@ async function ensureMarketTables() {
     }
   }
 
+  const ordersMissingShipments = await prisma.$queryRawUnsafe<OrderRow[]>(
+    `SELECT o.id, o.order_number, o.buyer_id, o.buyer_name, o.seller_id, o.seller_name, o.date, o.status, o.total, o.items_json, o.estimated_delivery, o.tracking_number
+     FROM market_orders o
+     WHERE NOT EXISTS (
+       SELECT 1 FROM market_order_shipments s WHERE s.order_id = o.id
+     )`,
+  )
+
+  if (ordersMissingShipments.length > 0) {
+    for (const row of ordersMissingShipments) {
+      const order = mapOrder(row)
+      const grouped = new Map<string, { sellerId: string; sellerName: string; amount: number }>()
+      for (const item of order.items) {
+        const key = `${item.sellerId}|${item.sellerName}`
+        const current = grouped.get(key)
+        if (current) {
+          current.amount += item.lineTotal
+        } else {
+          grouped.set(key, { sellerId: item.sellerId, sellerName: item.sellerName, amount: item.lineTotal })
+        }
+      }
+
+      const shipmentStatus = toShipmentStatus(order.status)
+      const sellerGroups = Array.from(grouped.values())
+      for (let index = 0; index < sellerGroups.length; index++) {
+        const seller = sellerGroups[index]
+        const tracking =
+          shipmentStatus === "in_transit" || shipmentStatus === "delivered"
+            ? `${order.trackingNumber || `TRK${Math.floor(100000000 + Math.random() * 900000000)}`}-S${index + 1}`
+            : null
+        const now = new Date().toISOString()
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO market_order_shipments
+           (id, order_id, seller_id, seller_name, amount, status, tracking_number, estimated_delivery, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          crypto.randomUUID(),
+          order.id,
+          seller.sellerId,
+          seller.sellerName,
+          Number(seller.amount.toFixed(2)),
+          shipmentStatus,
+          tracking,
+          order.estimatedDelivery,
+          now,
+          now,
+        )
+      }
+    }
+  }
+
   marketTablesReady = true
 }
 
-export async function listProducts() {
+export async function listProductsPaginated(input?: {
+  page?: number
+  limit?: number
+  q?: string
+  category?: string
+  scopeSellerId?: string
+}) {
   await ensureMarketTables()
+  const { page, limit, offset } = normalizePagination(input)
+  const where: string[] = []
+  const params: unknown[] = []
+
+  if (input?.scopeSellerId) {
+    where.push("seller_id = ?")
+    params.push(input.scopeSellerId)
+  }
+
+  if (input?.q?.trim()) {
+    const q = `%${escapeLikeQuery(input.q.trim().toLowerCase())}%`
+    where.push("(LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(category) LIKE ? ESCAPE '\\' OR LOWER(seller_name) LIKE ? ESCAPE '\\')")
+    params.push(q, q, q)
+  }
+
+  if (input?.category && input.category.trim().toLowerCase() !== "all") {
+    where.push("LOWER(category) = ?")
+    params.push(input.category.trim().toLowerCase())
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
   const rows = await prisma.$queryRawUnsafe<ProductRow[]>(
-    "SELECT id, name, category, price, unit, stock, min_stock, status, rating, image, seller_id, seller_name, created_at, updated_at FROM market_products ORDER BY datetime(updated_at) DESC",
+    `SELECT id, name, category, price, unit, stock, min_stock, status, rating, image, seller_id, seller_name, created_at, updated_at
+     FROM market_products
+     ${whereSql}
+     ORDER BY updated_at DESC
+     LIMIT ? OFFSET ?`,
+    ...params,
+    limit,
+    offset,
   )
-  return rows.map(mapProduct)
+
+  const countRows = await prisma.$queryRawUnsafe<Array<{ total: number }>>(
+    `SELECT COUNT(1) as total FROM market_products ${whereSql}`,
+    ...params,
+  )
+
+  const total = Number(countRows[0]?.total ?? 0)
+  const items = rows.map(mapProduct)
+  return {
+    items,
+    total,
+    page,
+    limit,
+    hasNextPage: page * limit < total,
+  } satisfies PaginatedResult<Product>
+}
+
+export async function listProducts() {
+  const page = await listProductsPaginated({ page: 1, limit: 5000 })
+  return page.items
 }
 
 export async function createProduct(input: Omit<Product, "id" | "createdAt" | "updatedAt">) {
@@ -701,12 +1256,224 @@ export async function createProduct(input: Omit<Product, "id" | "createdAt" | "u
   }
 }
 
-export async function listOrders() {
+export async function listOrdersPaginated(input?: {
+  page?: number
+  limit?: number
+  status?: OrderStatus | "all"
+  buyerId?: string
+  sellerId?: string
+  q?: string
+}) {
   await ensureMarketTables()
+  const { page, limit, offset } = normalizePagination(input)
+  const where: string[] = []
+  const params: unknown[] = []
+
+  if (input?.status && input.status !== "all") {
+    where.push("status = ?")
+    params.push(input.status)
+  }
+  if (input?.buyerId) {
+    where.push("buyer_id = ?")
+    params.push(input.buyerId)
+  }
+  if (input?.sellerId) {
+    where.push("(seller_id = ? OR items_json LIKE ?)")
+    params.push(input.sellerId, `%\"sellerId\":\"${input.sellerId}\"%`)
+  }
+  if (input?.q?.trim()) {
+    const q = `%${escapeLikeQuery(input.q.trim().toLowerCase())}%`
+    where.push(
+      "(LOWER(order_number) LIKE ? ESCAPE '\\' OR LOWER(buyer_name) LIKE ? ESCAPE '\\' OR LOWER(seller_name) LIKE ? ESCAPE '\\')",
+    )
+    params.push(q, q, q)
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
   const rows = await prisma.$queryRawUnsafe<OrderRow[]>(
-    "SELECT id, order_number, buyer_id, buyer_name, seller_id, seller_name, date, status, total, items_json, estimated_delivery, tracking_number FROM market_orders ORDER BY datetime(date) DESC",
+    `SELECT id, order_number, buyer_id, buyer_name, seller_id, seller_name, date, status, total, items_json, estimated_delivery, tracking_number
+     FROM market_orders
+     ${whereSql}
+     ORDER BY date DESC
+     LIMIT ? OFFSET ?`,
+    ...params,
+    limit,
+    offset,
   )
-  return rows.map(mapOrder)
+  const countRows = await prisma.$queryRawUnsafe<Array<{ total: number }>>(
+    `SELECT COUNT(1) as total FROM market_orders ${whereSql}`,
+    ...params,
+  )
+
+  const total = Number(countRows[0]?.total ?? 0)
+  const items = rows.map(mapOrder)
+  return {
+    items,
+    total,
+    page,
+    limit,
+    hasNextPage: page * limit < total,
+  } satisfies PaginatedResult<Order>
+}
+
+export async function listOrders() {
+  const page = await listOrdersPaginated({ page: 1, limit: 5000 })
+  return page.items
+}
+
+export async function listOrderShipments(input?: { orderId?: string; sellerId?: string }) {
+  await ensureMarketTables()
+  const where: string[] = []
+  const params: unknown[] = []
+  if (input?.orderId) {
+    where.push("order_id = ?")
+    params.push(input.orderId)
+  }
+  if (input?.sellerId) {
+    where.push("seller_id = ?")
+    params.push(input.sellerId)
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
+  const rows = await prisma.$queryRawUnsafe<OrderShipmentRow[]>(
+    `SELECT id, order_id, seller_id, seller_name, amount, status, tracking_number, estimated_delivery, created_at, updated_at
+     FROM market_order_shipments
+     ${whereSql}
+     ORDER BY created_at DESC`,
+    ...params,
+  )
+  return rows.map(mapOrderShipment)
+}
+
+export async function listOrderShipmentsByOrderIds(orderIds: string[]) {
+  await ensureMarketTables()
+  if (orderIds.length === 0) return []
+  const placeholders = orderIds.map(() => "?").join(", ")
+  const rows = await prisma.$queryRawUnsafe<OrderShipmentRow[]>(
+    `SELECT id, order_id, seller_id, seller_name, amount, status, tracking_number, estimated_delivery, created_at, updated_at
+     FROM market_order_shipments
+     WHERE order_id IN (${placeholders})
+     ORDER BY created_at DESC`,
+    ...orderIds,
+  )
+  return rows.map(mapOrderShipment)
+}
+
+export async function listDistributorLocations(
+  distributorId?: string,
+  options?: {
+    activeOnly?: boolean
+  },
+) {
+  await ensureMarketTables()
+  const where: string[] = []
+  const params: unknown[] = []
+
+  if (distributorId) {
+    where.push("distributor_id = ?")
+    params.push(distributorId)
+  }
+  if (options?.activeOnly) {
+    where.push("status = ?")
+    params.push("active")
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
+
+  const rows = await prisma.$queryRawUnsafe<DistributorLocationRow[]>(
+    `SELECT id, distributor_id, name, address, radius_km, status, delivery_time, created_at, updated_at
+     FROM market_distributor_locations
+     ${whereSql}
+     ORDER BY updated_at DESC`,
+    ...params,
+  )
+  return rows.map(mapDistributorLocation)
+}
+
+export async function upsertDistributorLocation(input: {
+  id?: string
+  distributorId: string
+  name: string
+  address: string
+  radiusKm: number
+  status: DistributorLocationStatus
+  deliveryTime: string
+}) {
+  await ensureMarketTables()
+  const now = new Date().toISOString()
+  const id = input.id?.trim() || crypto.randomUUID()
+
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO market_distributor_locations
+     (id, distributor_id, name, address, radius_km, status, delivery_time, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       address = excluded.address,
+       radius_km = excluded.radius_km,
+       status = excluded.status,
+       delivery_time = excluded.delivery_time,
+       updated_at = excluded.updated_at`,
+    id,
+    input.distributorId,
+    input.name,
+    input.address,
+    input.radiusKm,
+    input.status,
+    input.deliveryTime,
+    now,
+    now,
+  )
+
+  const rows = await prisma.$queryRawUnsafe<DistributorLocationRow[]>(
+    `SELECT id, distributor_id, name, address, radius_km, status, delivery_time, created_at, updated_at
+     FROM market_distributor_locations
+     WHERE id = ?
+     LIMIT 1`,
+    id,
+  )
+  return rows.length ? mapDistributorLocation(rows[0]) : null
+}
+
+export async function deleteDistributorLocation(input: { id: string; distributorId: string }) {
+  await ensureMarketTables()
+  await prisma.$executeRawUnsafe(
+    "DELETE FROM market_distributor_locations WHERE id = ? AND distributor_id = ?",
+    input.id,
+    input.distributorId,
+  )
+}
+
+export async function listSupplierFavorites(userId: string) {
+  await ensureMarketTables()
+  const rows = await prisma.$queryRawUnsafe<SupplierFavoriteRow[]>(
+    `SELECT user_id, supplier_name, created_at
+     FROM market_supplier_favorites
+     WHERE user_id = ?
+     ORDER BY created_at DESC`,
+    userId,
+  )
+  return rows.map(mapSupplierFavorite)
+}
+
+export async function setSupplierFavorite(input: { userId: string; supplierName: string; favorite: boolean }) {
+  await ensureMarketTables()
+  const now = new Date().toISOString()
+  if (input.favorite) {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO market_supplier_favorites (user_id, supplier_name, created_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT (user_id, supplier_name) DO NOTHING`,
+      input.userId,
+      input.supplierName,
+      now,
+    )
+    return
+  }
+
+  await prisma.$executeRawUnsafe(
+    "DELETE FROM market_supplier_favorites WHERE user_id = ? AND supplier_name = ?",
+    input.userId,
+    input.supplierName,
+  )
 }
 
 export async function updateOrderStatus(input: { orderId: string; status: OrderStatus }) {
@@ -729,6 +1496,14 @@ export async function updateOrderStatus(input: { orderId: string; status: OrderS
     "UPDATE market_orders SET status = ?, tracking_number = ? WHERE id = ?",
     input.status,
     trackingNumber,
+    input.orderId,
+  )
+
+  const shipmentStatus = toShipmentStatus(input.status)
+  await prisma.$executeRawUnsafe(
+    "UPDATE market_order_shipments SET status = ?, updated_at = ? WHERE order_id = ?",
+    shipmentStatus,
+    new Date().toISOString(),
     input.orderId,
   )
 
@@ -762,12 +1537,187 @@ export async function updateOrderStatus(input: { orderId: string; status: OrderS
   return updatedRows.length ? mapOrder(updatedRows[0]) : null
 }
 
+export async function updateOrderEstimatedDelivery(input: { orderId: string; estimatedDelivery: string }) {
+  await ensureMarketTables()
+
+  await prisma.$executeRawUnsafe(
+    "UPDATE market_orders SET estimated_delivery = ? WHERE id = ?",
+    input.estimatedDelivery,
+    input.orderId,
+  )
+
+  await prisma.$executeRawUnsafe(
+    "UPDATE market_order_shipments SET estimated_delivery = ?, updated_at = ? WHERE order_id = ?",
+    input.estimatedDelivery,
+    new Date().toISOString(),
+    input.orderId,
+  )
+
+  const rows = await prisma.$queryRawUnsafe<OrderRow[]>(
+    "SELECT id, order_number, buyer_id, buyer_name, seller_id, seller_name, date, status, total, items_json, estimated_delivery, tracking_number FROM market_orders WHERE id = ? LIMIT 1",
+    input.orderId,
+  )
+
+  return rows.length ? mapOrder(rows[0]) : null
+}
+
 export async function listPayments() {
   await ensureMarketTables()
   const rows = await prisma.$queryRawUnsafe<PaymentRow[]>(
-    "SELECT id, order_id, user_id, amount, method, status, created_at FROM market_payments ORDER BY datetime(created_at) DESC",
+    `SELECT id, order_id, user_id, amount, method, status, provider, payment_intent_id, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, created_at
+     FROM market_payments
+     ORDER BY created_at DESC`,
   )
   return rows.map(mapPayment)
+}
+
+export async function createPaymentIntent(input: {
+  buyerId: string
+  provider: PaymentProvider
+  amount: number
+  currency?: string
+  gatewayOrderId?: string
+  gatewayTransactionId?: string
+  gatewayPayload?: string
+}) {
+  await ensureMarketTables()
+
+  const now = new Date().toISOString()
+  const id = crypto.randomUUID()
+  const currency = input.currency ?? "INR"
+
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO market_payment_intents
+     (id, buyer_id, provider, amount, currency, status, gateway_order_id, gateway_transaction_id, gateway_payload, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id,
+    input.buyerId,
+    input.provider,
+    input.amount,
+    currency,
+    "pending",
+    input.gatewayOrderId ?? null,
+    input.gatewayTransactionId ?? null,
+    input.gatewayPayload ?? null,
+    now,
+    now,
+  )
+
+  return getPaymentIntentById(id)
+}
+
+export async function getPaymentIntentById(intentId: string) {
+  await ensureMarketTables()
+  const rows = await prisma.$queryRawUnsafe<PaymentIntentRow[]>(
+    `SELECT id, buyer_id, provider, amount, currency, status, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, consumed_at, created_at, updated_at
+     FROM market_payment_intents
+     WHERE id = ?
+     LIMIT 1`,
+    intentId,
+  )
+
+  return rows.length > 0 ? mapPaymentIntent(rows[0]) : null
+}
+
+export async function getPaymentIntentByGatewayOrderId(gatewayOrderId: string) {
+  await ensureMarketTables()
+  const rows = await prisma.$queryRawUnsafe<PaymentIntentRow[]>(
+    `SELECT id, buyer_id, provider, amount, currency, status, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, consumed_at, created_at, updated_at
+     FROM market_payment_intents
+     WHERE gateway_order_id = ?
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    gatewayOrderId,
+  )
+  return rows.length > 0 ? mapPaymentIntent(rows[0]) : null
+}
+
+export async function getPaymentIntentByGatewayTransactionId(gatewayTransactionId: string) {
+  await ensureMarketTables()
+  const rows = await prisma.$queryRawUnsafe<PaymentIntentRow[]>(
+    `SELECT id, buyer_id, provider, amount, currency, status, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, consumed_at, created_at, updated_at
+     FROM market_payment_intents
+     WHERE gateway_transaction_id = ?
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    gatewayTransactionId,
+  )
+  return rows.length > 0 ? mapPaymentIntent(rows[0]) : null
+}
+
+export async function markPaymentIntentVerified(input: {
+  intentId: string
+  gatewayTransactionId?: string
+  gatewaySignature?: string
+  gatewayPayload?: string
+}) {
+  await ensureMarketTables()
+
+  const existing = await getPaymentIntentById(input.intentId)
+  if (!existing) return null
+
+  const now = new Date().toISOString()
+  const status = existing.status === "used" ? "used" : "verified"
+
+  await prisma.$executeRawUnsafe(
+    `UPDATE market_payment_intents
+     SET status = ?, gateway_transaction_id = ?, gateway_signature = ?, gateway_payload = ?, verified_at = ?, updated_at = ?
+     WHERE id = ?`,
+    status,
+    input.gatewayTransactionId ?? existing.gatewayTransactionId ?? null,
+    input.gatewaySignature ?? existing.gatewaySignature ?? null,
+    input.gatewayPayload ?? existing.gatewayPayload ?? null,
+    now,
+    now,
+    input.intentId,
+  )
+
+  return getPaymentIntentById(input.intentId)
+}
+
+export async function markPaymentIntentFailed(input: { intentId: string; gatewayPayload?: string }) {
+  await ensureMarketTables()
+  const existing = await getPaymentIntentById(input.intentId)
+  if (!existing) return null
+
+  const now = new Date().toISOString()
+  await prisma.$executeRawUnsafe(
+    "UPDATE market_payment_intents SET status = ?, gateway_payload = ?, updated_at = ? WHERE id = ?",
+    "failed",
+    input.gatewayPayload ?? existing.gatewayPayload ?? null,
+    now,
+    input.intentId,
+  )
+  return getPaymentIntentById(input.intentId)
+}
+
+export async function consumePaymentIntent(input: {
+  intentId: string
+  buyerId: string
+  amount?: number
+  tolerance?: number
+}) {
+  await ensureMarketTables()
+  const intent = await getPaymentIntentById(input.intentId)
+  if (!intent || intent.buyerId !== input.buyerId || intent.status !== "verified") {
+    return null
+  }
+
+  const tolerance = input.tolerance ?? 1
+  if (typeof input.amount === "number" && Math.abs(intent.amount - input.amount) > tolerance) {
+    return null
+  }
+
+  const now = new Date().toISOString()
+  await prisma.$executeRawUnsafe(
+    "UPDATE market_payment_intents SET status = ?, consumed_at = ?, updated_at = ? WHERE id = ?",
+    "used",
+    now,
+    now,
+    input.intentId,
+  )
+
+  return getPaymentIntentById(input.intentId)
 }
 
 export async function listDeliveries() {
@@ -775,7 +1725,7 @@ export async function listDeliveries() {
   const rows = await prisma.$queryRawUnsafe<DeliveryRow[]>(
     `SELECT id, order_id, buyer_id, buyer_name, seller_id, seller_name, distributor_id, distributor_name, pickup_address, delivery_address, vehicle_number, vehicle_type, driver_name, driver_phone, status, eta_minutes, current_lat, current_lng, current_address, last_location_at, created_at, updated_at
      FROM market_deliveries
-     ORDER BY datetime(updated_at) DESC`,
+     ORDER BY updated_at DESC`,
   )
   return rows.map(mapDelivery)
 }
@@ -813,7 +1763,7 @@ export async function listDeliveryLocations(input: { deliveryId: string; limit?:
     `SELECT id, delivery_id, order_id, lat, lng, address, speed_kph, heading, status, created_at
      FROM market_delivery_locations
      WHERE delivery_id = ?
-     ORDER BY datetime(created_at) DESC
+     ORDER BY created_at DESC
      LIMIT ?`,
     input.deliveryId,
     safeLimit,
@@ -1002,6 +1952,7 @@ export async function updateDelivery(input: {
   status?: DeliveryStatus
   distributorId?: string
   distributorName?: string
+  deliveryAddress?: string
   vehicleNumber?: string
   vehicleType?: string
   driverName?: string
@@ -1023,6 +1974,7 @@ export async function updateDelivery(input: {
     status: input.status ?? existing.status,
     distributorId: input.distributorId ?? existing.distributorId,
     distributorName: input.distributorName ?? existing.distributorName,
+    deliveryAddress: input.deliveryAddress ?? existing.deliveryAddress,
     vehicleNumber: input.vehicleNumber ?? existing.vehicleNumber,
     vehicleType: input.vehicleType ?? existing.vehicleType,
     driverName: input.driverName ?? existing.driverName,
@@ -1047,11 +1999,12 @@ export async function updateDelivery(input: {
 
   await prisma.$executeRawUnsafe(
     `UPDATE market_deliveries
-     SET status = ?, distributor_id = ?, distributor_name = ?, vehicle_number = ?, vehicle_type = ?, driver_name = ?, driver_phone = ?, eta_minutes = ?, current_lat = ?, current_lng = ?, current_address = ?, last_location_at = ?, updated_at = ?
+     SET status = ?, distributor_id = ?, distributor_name = ?, delivery_address = ?, vehicle_number = ?, vehicle_type = ?, driver_name = ?, driver_phone = ?, eta_minutes = ?, current_lat = ?, current_lng = ?, current_address = ?, last_location_at = ?, updated_at = ?
      WHERE id = ?`,
     next.status,
     next.distributorId,
     next.distributorName,
+    next.deliveryAddress,
     next.vehicleNumber,
     next.vehicleType,
     next.driverName,
@@ -1154,7 +2107,20 @@ export async function createOrder(input: {
   buyerId: string
   buyerName: string
   items: Array<{ productId: string; quantity: number }>
+  deliveryAddress: string
+  requestedDeliveryDate?: string
+  preferredDistributorId?: string
+  preferredDistributorName?: string
+  preferredVehicleType?: string
   paymentMethod: string
+  paymentStatus?: PaymentStatus
+  paymentProvider?: PaymentProvider
+  paymentIntentId?: string
+  gatewayOrderId?: string
+  gatewayTransactionId?: string
+  gatewaySignature?: string
+  gatewayPayload?: string
+  paymentVerifiedAt?: string
 }) {
   await ensureMarketTables()
 
@@ -1202,7 +2168,23 @@ export async function createOrder(input: {
     }
 
     const total = orderItems.reduce((sum, item) => sum + item.lineTotal, 0)
-    const primarySeller = orderItems[0]
+    const sellerGroups = new Map<string, { sellerId: string; sellerName: string; amount: number }>()
+    for (const item of orderItems) {
+      const key = `${item.sellerId}|${item.sellerName}`
+      const current = sellerGroups.get(key)
+      if (current) {
+        current.amount += item.lineTotal
+      } else {
+        sellerGroups.set(key, {
+          sellerId: item.sellerId,
+          sellerName: item.sellerName,
+          amount: item.lineTotal,
+        })
+      }
+    }
+    const sellerList = Array.from(sellerGroups.values())
+    const primarySeller = sellerList[0]
+    const hasMultiSeller = sellerList.length > 1
     const now = new Date()
 
     const order: Order = {
@@ -1210,14 +2192,14 @@ export async function createOrder(input: {
       orderNumber: `ORD-${now.getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
       buyerId: input.buyerId,
       buyerName: input.buyerName,
-      sellerId: primarySeller?.sellerId || "",
-      sellerName: primarySeller?.sellerName || "",
+      sellerId: hasMultiSeller ? "multi-seller" : primarySeller?.sellerId || "",
+      sellerName: hasMultiSeller ? "Multiple Sellers" : primarySeller?.sellerName || "",
       date: now.toISOString(),
-      status: "confirmed",
+      status: "pending",
       total,
       items: orderItems,
-      estimatedDelivery: new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000).toISOString(),
-      trackingNumber: `TRK${Math.floor(100000000 + Math.random() * 900000000)}`,
+      estimatedDelivery: input.requestedDeliveryDate || new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000).toISOString(),
+      trackingNumber: undefined,
     }
 
     const payment: Payment = {
@@ -1226,11 +2208,23 @@ export async function createOrder(input: {
       userId: input.buyerId,
       amount: total,
       method: input.paymentMethod,
-      status: "paid",
+      status: input.paymentStatus ?? "pending",
+      provider: input.paymentProvider,
+      paymentIntentId: input.paymentIntentId,
+      gatewayOrderId: input.gatewayOrderId,
+      gatewayTransactionId: input.gatewayTransactionId,
+      gatewaySignature: input.gatewaySignature,
+      gatewayPayload: input.gatewayPayload,
+      verifiedAt: input.paymentVerifiedAt,
       createdAt: now.toISOString(),
     }
 
-    const delivery = buildDefaultDeliveryFromOrder(order, now.toISOString())
+    const delivery = buildDefaultDeliveryFromOrder(order, now.toISOString(), {
+      deliveryAddress: input.deliveryAddress,
+      distributorId: input.preferredDistributorId,
+      distributorName: input.preferredDistributorName,
+      vehicleType: input.preferredVehicleType,
+    })
 
     await tx.$executeRawUnsafe(
       `INSERT INTO market_orders
@@ -1252,16 +2246,55 @@ export async function createOrder(input: {
 
     await tx.$executeRawUnsafe(
       `INSERT INTO market_payments
-       (id, order_id, user_id, amount, method, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (id, order_id, user_id, amount, method, status, provider, payment_intent_id, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       payment.id,
       payment.orderId,
       payment.userId,
       payment.amount,
       payment.method,
       payment.status,
+      payment.provider ?? null,
+      payment.paymentIntentId ?? null,
+      payment.gatewayOrderId ?? null,
+      payment.gatewayTransactionId ?? null,
+      payment.gatewaySignature ?? null,
+      payment.gatewayPayload ?? null,
+      payment.verifiedAt ?? null,
       payment.createdAt,
     )
+
+    for (let index = 0; index < sellerList.length; index++) {
+      const seller = sellerList[index]
+      const shipment: OrderShipment = {
+        id: crypto.randomUUID(),
+        orderId: order.id,
+        sellerId: seller.sellerId,
+        sellerName: seller.sellerName,
+        amount: Number(seller.amount.toFixed(2)),
+        status: toShipmentStatus(order.status),
+        trackingNumber: order.trackingNumber ? `${order.trackingNumber}-S${index + 1}` : undefined,
+        estimatedDelivery: order.estimatedDelivery,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      }
+
+      await tx.$executeRawUnsafe(
+        `INSERT INTO market_order_shipments
+         (id, order_id, seller_id, seller_name, amount, status, tracking_number, estimated_delivery, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        shipment.id,
+        shipment.orderId,
+        shipment.sellerId,
+        shipment.sellerName,
+        shipment.amount,
+        shipment.status,
+        shipment.trackingNumber ?? null,
+        shipment.estimatedDelivery,
+        shipment.createdAt,
+        shipment.updatedAt,
+      )
+    }
 
     await tx.$executeRawUnsafe(
       `INSERT INTO market_deliveries
@@ -1316,10 +2349,10 @@ export async function getMarketRates(): Promise<MarketRates> {
     items.length > 0 ? Number((items.reduce((sum, item) => sum + item.price, 0) / items.length).toFixed(2)) : fallback
 
   return {
-    brickPerPiece: avg(brickProducts, 8.5),
-    cementPerBag: avg(cementProducts, 420),
-    sandPerTon: avg(sandProducts, 1200),
-    steelPerTon: avg(steelProducts, 62000),
+    brickPerPiece: avg(brickProducts, 7.4),
+    cementPerBag: avg(cementProducts, 382),
+    sandPerTon: avg(sandProducts, 1380),
+    steelPerTon: avg(steelProducts, 61100),
     sourceCount: {
       bricks: brickProducts.length,
       cement: cementProducts.length,
@@ -1328,3 +2361,4 @@ export async function getMarketRates(): Promise<MarketRates> {
     },
   }
 }
+
