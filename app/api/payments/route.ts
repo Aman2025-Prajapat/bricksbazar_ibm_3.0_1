@@ -68,6 +68,10 @@ function sha256(value: string) {
   return crypto.createHash("sha256").update(value).digest("hex")
 }
 
+function getRazorpayModeFromKeyId(keyId: string) {
+  return keyId.startsWith("rzp_test_") ? ("test" as const) : ("live" as const)
+}
+
 async function createRazorpayOrder(input: { amount: number; currency: string; receipt: string }) {
   const keyId = process.env.RAZORPAY_KEY_ID?.trim() || ""
   const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim() || ""
@@ -113,8 +117,9 @@ async function createRazorpayOrder(input: { amount: number; currency: string; re
     throw new Error(message)
   }
 
+  const mode = getRazorpayModeFromKeyId(keyId)
   return {
-    mode: "live" as const,
+    mode,
     keyId,
     orderId: payload.id,
     amountPaise: payload.amount,
@@ -127,12 +132,14 @@ function verifyRazorpaySignature(input: {
   razorpayPaymentId: string
   razorpaySignature: string
 }) {
+  const keyId = process.env.RAZORPAY_KEY_ID?.trim() || ""
   const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim() || ""
+  const mode = keyId ? getRazorpayModeFromKeyId(keyId) : ("live" as const)
   if (!keySecret) {
     if (isProduction) {
       return {
         ok: false,
-        mode: "live" as const,
+        mode,
         reason: "RAZORPAY_KEY_SECRET is missing",
       }
     }
@@ -149,7 +156,7 @@ function verifyRazorpaySignature(input: {
 
   return {
     ok: match,
-    mode: "live" as const,
+    mode,
     reason: match ? "signature_verified" : "signature_mismatch",
   }
 }

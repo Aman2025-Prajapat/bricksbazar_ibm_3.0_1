@@ -38,7 +38,7 @@ type EnrichedPayment = Payment & {
 type RazorpayCreateIntentResponse = {
   intentId?: string
   provider?: "razorpay"
-  mode?: "mock" | "live"
+  mode?: "mock" | "test" | "live"
   keyId?: string
   gatewayOrderId?: string
   amount?: number
@@ -363,6 +363,12 @@ export default function PaymentsPage() {
             "Razorpay checkout is in mock mode on this environment. Configure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET, then retry.",
           )
         }
+        const isRazorpayTestMode = intentPayload.mode === "test" || (intentPayload.keyId || "").startsWith("rzp_test_")
+        if (isRazorpayTestMode) {
+          setSuccessMessage(
+            "Razorpay test mode detected. QR/real UPI apps can fail in sandbox; use test card/netbanking inside checkout.",
+          )
+        }
 
         const scriptReady = await loadRazorpayScript()
         if (!scriptReady || !window.Razorpay || !intentPayload.keyId || !intentPayload.amountPaise || !intentPayload.currency) {
@@ -378,6 +384,13 @@ export default function PaymentsPage() {
             order_id: intentPayload.gatewayOrderId,
             name: "BricksBazar IBM",
             description: `Payment for ${selectedPayableOrder.orderNumber}`,
+            ...(isRazorpayTestMode
+              ? {
+                  method: {
+                    upi: false,
+                  },
+                }
+              : {}),
             handler: async (response: unknown) => {
               try {
                 const parsedResponse = response as RazorpayHandlerResponse
