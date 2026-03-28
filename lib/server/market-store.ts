@@ -99,6 +99,21 @@ export type PaymentIntent = {
   updatedAt: string
 }
 
+export type PaymentEventStatus = "pending" | "success" | "failed" | "info"
+
+export type PaymentEvent = {
+  id: string
+  intentId?: string
+  orderId?: string
+  buyerId?: string
+  provider?: PaymentProvider
+  eventType: string
+  source: string
+  status: PaymentEventStatus
+  detailsJson?: string
+  createdAt: string
+}
+
 export type DistributorLocationStatus = "active" | "maintenance" | "inactive"
 
 export type DistributorLocation = {
@@ -284,6 +299,19 @@ type PaymentIntentRow = {
   consumed_at: string | null
   created_at: string
   updated_at: string
+}
+
+type PaymentEventRow = {
+  id: string
+  intent_id: string | null
+  order_id: string | null
+  buyer_id: string | null
+  provider: PaymentProvider | null
+  event_type: string
+  source: string
+  status: PaymentEventStatus
+  details_json: string | null
+  created_at: string
 }
 
 type DistributorLocationRow = {
@@ -491,6 +519,21 @@ function mapPaymentIntent(row: PaymentIntentRow): PaymentIntent {
     consumedAt: row.consumed_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+function mapPaymentEvent(row: PaymentEventRow): PaymentEvent {
+  return {
+    id: row.id,
+    intentId: row.intent_id ?? undefined,
+    orderId: row.order_id ?? undefined,
+    buyerId: row.buyer_id ?? undefined,
+    provider: row.provider ?? undefined,
+    eventType: row.event_type,
+    source: row.source,
+    status: row.status,
+    detailsJson: row.details_json ?? undefined,
+    createdAt: row.created_at,
   }
 }
 
@@ -950,6 +993,21 @@ async function ensureMarketTables() {
   `)
 
   await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS market_payment_events (
+      id TEXT PRIMARY KEY,
+      intent_id TEXT,
+      order_id TEXT,
+      buyer_id TEXT,
+      provider TEXT,
+      event_type TEXT NOT NULL,
+      source TEXT NOT NULL,
+      status TEXT NOT NULL,
+      details_json TEXT,
+      created_at TEXT NOT NULL
+    )
+  `)
+
+  await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS market_deliveries (
       id TEXT PRIMARY KEY,
       order_id TEXT NOT NULL UNIQUE,
@@ -1068,6 +1126,10 @@ async function ensureMarketTables() {
   )
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payment_intents_provider_idx ON market_payment_intents(provider)")
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payment_intents_created_idx ON market_payment_intents(created_at)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payment_events_intent_idx ON market_payment_events(intent_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payment_events_order_idx ON market_payment_events(order_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payment_events_buyer_idx ON market_payment_events(buyer_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_payment_events_created_idx ON market_payment_events(created_at)")
 
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_deliveries_status_idx ON market_deliveries(status)")
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_deliveries_buyer_idx ON market_deliveries(buyer_id)")
@@ -1643,6 +1705,69 @@ export async function getPaymentByOrderId(orderId: string) {
   return rows.length > 0 ? mapPayment(rows[0]) : null
 }
 
+export async function logPaymentEvent(input: {
+  intentId?: string
+  orderId?: string
+  buyerId?: string
+  provider?: PaymentProvider
+  eventType: string
+  source: string
+  status: PaymentEventStatus
+  detailsJson?: string
+}) {
+  await ensureMarketTables()
+
+  const event: PaymentEvent = {
+    id: crypto.randomUUID(),
+    intentId: input.intentId,
+    orderId: input.orderId,
+    buyerId: input.buyerId,
+    provider: input.provider,
+    eventType: input.eventType,
+    source: input.source,
+    status: input.status,
+    detailsJson: input.detailsJson,
+    createdAt: new Date().toISOString(),
+  }
+
+  try {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO market_payment_events
+       (id, intent_id, order_id, buyer_id, provider, event_type, source, status, details_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      event.id,
+      event.intentId ?? null,
+      event.orderId ?? null,
+      event.buyerId ?? null,
+      event.provider ?? null,
+      event.eventType,
+      event.source,
+      event.status,
+      event.detailsJson ?? null,
+      event.createdAt,
+    )
+  } catch {
+    // Payment processing must not fail just because audit logging failed.
+  }
+
+  return event
+}
+
+export async function listPaymentEventsByOrderId(orderId: string, limit = 100) {
+  await ensureMarketTables()
+  const safeLimit = Math.min(500, Math.max(1, Math.floor(limit)))
+  const rows = await prisma.$queryRawUnsafe<PaymentEventRow[]>(
+    `SELECT id, intent_id, order_id, buyer_id, provider, event_type, source, status, details_json, created_at
+     FROM market_payment_events
+     WHERE order_id = ?
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    orderId,
+    safeLimit,
+  )
+  return rows.map(mapPaymentEvent)
+}
+
 export async function markOrderPaymentPaid(input: {
   orderId: string
   buyerId: string
@@ -1657,7 +1782,7 @@ export async function markOrderPaymentPaid(input: {
 }) {
   await ensureMarketTables()
 
-  return prisma.$transaction(async (tx) => {
+  const settled = await prisma.$transaction(async (tx) => {
     const orderRows = await tx.$queryRawUnsafe<OrderRow[]>(
       "SELECT id, order_number, buyer_id, buyer_name, seller_id, seller_name, date, status, total, items_json, estimated_delivery, tracking_number FROM market_orders WHERE id = ? LIMIT 1",
       input.orderId,
@@ -1738,6 +1863,23 @@ export async function markOrderPaymentPaid(input: {
       payment: updatedPaymentRows.length > 0 ? mapPayment(updatedPaymentRows[0]) : null,
     }
   })
+
+  await logPaymentEvent({
+    intentId: input.paymentIntentId,
+    orderId: input.orderId,
+    buyerId: input.buyerId,
+    provider: input.paymentProvider,
+    eventType: "order_payment_settled",
+    source: "payment_settlement",
+    status: "success",
+    detailsJson: JSON.stringify({
+      paymentMethod: input.paymentMethod,
+      gatewayOrderId: input.gatewayOrderId ?? null,
+      gatewayTransactionId: input.gatewayTransactionId ?? null,
+    }),
+  })
+
+  return settled
 }
 
 export async function createPaymentIntent(input: {
@@ -1772,7 +1914,23 @@ export async function createPaymentIntent(input: {
     now,
   )
 
-  return getPaymentIntentById(id)
+  const intent = await getPaymentIntentById(id)
+  await logPaymentEvent({
+    intentId: id,
+    buyerId: input.buyerId,
+    provider: input.provider,
+    eventType: "intent_created",
+    source: "payment_api",
+    status: "pending",
+    detailsJson: JSON.stringify({
+      amount: input.amount,
+      currency,
+      gatewayOrderId: input.gatewayOrderId ?? null,
+      gatewayTransactionId: input.gatewayTransactionId ?? null,
+    }),
+  })
+
+  return intent
 }
 
 export async function getPaymentIntentById(intentId: string) {
@@ -1841,7 +1999,22 @@ export async function markPaymentIntentVerified(input: {
     input.intentId,
   )
 
-  return getPaymentIntentById(input.intentId)
+  const nextIntent = await getPaymentIntentById(input.intentId)
+  if (nextIntent) {
+    await logPaymentEvent({
+      intentId: nextIntent.id,
+      buyerId: nextIntent.buyerId,
+      provider: nextIntent.provider,
+      eventType: "intent_verified",
+      source: "payment_verification",
+      status: "success",
+      detailsJson: JSON.stringify({
+        gatewayTransactionId: nextIntent.gatewayTransactionId ?? null,
+      }),
+    })
+  }
+
+  return nextIntent
 }
 
 export async function markPaymentIntentFailed(input: { intentId: string; gatewayPayload?: string }) {
@@ -1857,7 +2030,20 @@ export async function markPaymentIntentFailed(input: { intentId: string; gateway
     now,
     input.intentId,
   )
-  return getPaymentIntentById(input.intentId)
+  const nextIntent = await getPaymentIntentById(input.intentId)
+  if (nextIntent) {
+    await logPaymentEvent({
+      intentId: nextIntent.id,
+      buyerId: nextIntent.buyerId,
+      provider: nextIntent.provider,
+      eventType: "intent_failed",
+      source: "payment_verification",
+      status: "failed",
+      detailsJson: input.gatewayPayload,
+    })
+  }
+
+  return nextIntent
 }
 
 export async function consumePaymentIntent(input: {
@@ -1886,7 +2072,22 @@ export async function consumePaymentIntent(input: {
     input.intentId,
   )
 
-  return getPaymentIntentById(input.intentId)
+  const consumedIntent = await getPaymentIntentById(input.intentId)
+  if (consumedIntent) {
+    await logPaymentEvent({
+      intentId: consumedIntent.id,
+      buyerId: consumedIntent.buyerId,
+      provider: consumedIntent.provider,
+      eventType: "intent_consumed",
+      source: "payment_settlement",
+      status: "success",
+      detailsJson: JSON.stringify({
+        amount: consumedIntent.amount,
+      }),
+    })
+  }
+
+  return consumedIntent
 }
 
 export async function listDeliveries() {

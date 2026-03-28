@@ -8,11 +8,13 @@ import {
   getPaymentByOrderId,
   listOrders,
   listPayments,
+  logPaymentEvent,
   markOrderPaymentPaid,
   markPaymentIntentFailed,
   markPaymentIntentVerified,
 } from "@/lib/server/market-store"
 import { getSessionUser } from "@/lib/server/auth-user"
+import { consumeRouteRateLimit, createRateLimitResponse } from "@/lib/server/api-rate-limit"
 
 const providerSchema = z.enum(["razorpay", "phonepe"])
 
@@ -306,7 +308,16 @@ async function verifyPhonePePayment(merchantTransactionId: string) {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const rateLimit = consumeRouteRateLimit(request, {
+    bucket: "api:payments:get",
+    limit: 120,
+    windowMs: 60_000,
+  })
+  if (!rateLimit.ok) {
+    return createRateLimitResponse("Too many payment requests. Please retry in a moment.", rateLimit.retryAfterSec)
+  }
+
   const sessionUser = await getSessionUser()
   if (!sessionUser) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -353,6 +364,15 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const rateLimit = consumeRouteRateLimit(request, {
+    bucket: "api:payments:post",
+    limit: 50,
+    windowMs: 60_000,
+  })
+  if (!rateLimit.ok) {
+    return createRateLimitResponse("Too many payment attempts. Please retry after a minute.", rateLimit.retryAfterSec)
+  }
+
   const sessionUser = await getSessionUser()
   if (!sessionUser || sessionUser.role !== "buyer") {
     return NextResponse.json({ error: "Only buyers can initiate payments" }, { status: 403 })
@@ -578,6 +598,22 @@ export async function POST(request: Request) {
       gatewayTransactionId: verifiedIntent?.gatewayTransactionId,
     })
   } catch (error) {
+    if (parsed.success) {
+      const provider = "provider" in parsed.data ? parsed.data.provider : undefined
+      await logPaymentEvent({
+        intentId: "intentId" in parsed.data ? parsed.data.intentId : undefined,
+        orderId: "orderId" in parsed.data ? parsed.data.orderId : undefined,
+        buyerId: sessionUser.userId,
+        provider,
+        eventType: `api_${parsed.data.action}_failed`,
+        source: "payment_api",
+        status: "failed",
+        detailsJson: JSON.stringify({
+          reason: error instanceof Error ? error.message : "Could not process payment request",
+        }),
+      })
+    }
+
     const status = error instanceof PaymentConfigError ? 503 : 400
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Could not process payment request" },

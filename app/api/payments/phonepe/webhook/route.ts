@@ -1,9 +1,11 @@
 ﻿import { NextResponse } from "next/server"
 import {
   getPaymentIntentByGatewayTransactionId,
+  logPaymentEvent,
   markPaymentIntentFailed,
   markPaymentIntentVerified,
 } from "@/lib/server/market-store"
+import { consumeRouteRateLimit, createRateLimitResponse } from "@/lib/server/api-rate-limit"
 
 type PhonePeWebhookPayload = {
   merchantTransactionId?: string
@@ -37,6 +39,15 @@ function resolveWebhookPayload(payload: PhonePeWebhookPayload) {
 }
 
 export async function POST(request: Request) {
+  const rateLimit = consumeRouteRateLimit(request, {
+    bucket: "api:payments:phonepe:webhook",
+    limit: 240,
+    windowMs: 60_000,
+  })
+  if (!rateLimit.ok) {
+    return createRateLimitResponse("Too many webhook events. Please retry shortly.", rateLimit.retryAfterSec)
+  }
+
   const token = process.env.PHONEPE_WEBHOOK_TOKEN?.trim() || ""
   if (!token) {
     return NextResponse.json({ error: "PhonePe webhook token is not configured" }, { status: 503 })
@@ -63,6 +74,20 @@ export async function POST(request: Request) {
   if (!intent) {
     return NextResponse.json({ ok: true })
   }
+
+  await logPaymentEvent({
+    intentId: intent.id,
+    buyerId: intent.buyerId,
+    provider: "phonepe",
+    eventType: state ? `webhook_${state.toLowerCase()}` : "webhook_received",
+    source: "phonepe_webhook",
+    status: "info",
+    detailsJson: JSON.stringify({
+      merchantTransactionId,
+      transactionId,
+      state,
+    }),
+  })
 
   const isAlreadySuccessful = intent.status === "verified" || intent.status === "used"
 

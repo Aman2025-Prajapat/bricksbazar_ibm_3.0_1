@@ -2,9 +2,11 @@
 import { NextResponse } from "next/server"
 import {
   getPaymentIntentByGatewayOrderId,
+  logPaymentEvent,
   markPaymentIntentFailed,
   markPaymentIntentVerified,
 } from "@/lib/server/market-store"
+import { consumeRouteRateLimit, createRateLimitResponse } from "@/lib/server/api-rate-limit"
 
 function verifyWebhookSignature(payload: string, signature: string, secret: string) {
   const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex")
@@ -17,6 +19,15 @@ function verifyWebhookSignature(payload: string, signature: string, secret: stri
 }
 
 export async function POST(request: Request) {
+  const rateLimit = consumeRouteRateLimit(request, {
+    bucket: "api:payments:razorpay:webhook",
+    limit: 240,
+    windowMs: 60_000,
+  })
+  if (!rateLimit.ok) {
+    return createRateLimitResponse("Too many webhook events. Please retry shortly.", rateLimit.retryAfterSec)
+  }
+
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET?.trim() || ""
   if (!secret) {
     return NextResponse.json({ error: "Razorpay webhook is not configured" }, { status: 503 })
@@ -59,6 +70,20 @@ export async function POST(request: Request) {
   if (!intent) {
     return NextResponse.json({ ok: true })
   }
+
+  await logPaymentEvent({
+    intentId: intent.id,
+    buyerId: intent.buyerId,
+    provider: "razorpay",
+    eventType: payload.event || "webhook_received",
+    source: "razorpay_webhook",
+    status: "info",
+    detailsJson: JSON.stringify({
+      orderId,
+      paymentId,
+      status,
+    }),
+  })
 
   const isCaptured = payload.event === "payment.captured" || status === "captured"
   const isFailed = payload.event === "payment.failed" || status === "failed"

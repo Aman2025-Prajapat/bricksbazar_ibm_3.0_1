@@ -1,6 +1,6 @@
 ﻿"use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -52,26 +52,52 @@ function getPriceRangeColor(range: Supplier["priceRange"]) {
 export default function SuppliersPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState("")
   const [actionMessage, setActionMessage] = useState("")
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("all")
+  const [page, setPage] = useState(1)
+  const [totalSuppliers, setTotalSuppliers] = useState(0)
+  const [hasNextPage, setHasNextPage] = useState(false)
+  const [availableCategories, setAvailableCategories] = useState<string[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [recommended, setRecommended] = useState<Supplier[]>([])
   const [favoriteSupplierNames, setFavoriteSupplierNames] = useState<string[]>([])
+  const firstLoadRef = useRef(true)
 
   useEffect(() => {
     let cancelled = false
 
     const loadData = async () => {
+      if (!firstLoadRef.current) {
+        setIsRefreshing(true)
+      }
       try {
+        const params = new URLSearchParams({
+          page: String(page),
+          limit: "24",
+        })
+        if (searchTerm.trim()) {
+          params.set("q", searchTerm.trim())
+        }
+        if (selectedCategory !== "all") {
+          params.set("category", selectedCategory)
+        }
+
         const [supplierResponse, favoritesResponse] = await Promise.all([
-          fetch("/api/buyer/suppliers", { credentials: "include", cache: "no-store" }),
+          fetch(`/api/buyer/suppliers?${params.toString()}`, { credentials: "include", cache: "no-store" }),
           fetch("/api/buyer/suppliers/favorites", { credentials: "include", cache: "no-store" }),
         ])
 
         const [supplierPayload, favoritesPayload] = await Promise.all([
-          supplierResponse.json() as Promise<{ suppliers?: Supplier[]; recommended?: Supplier[]; error?: string }>,
+          supplierResponse.json() as Promise<{
+            suppliers?: Supplier[]
+            recommended?: Supplier[]
+            error?: string
+            pagination?: { total?: number; hasNextPage?: boolean }
+            filters?: { availableCategories?: string[] }
+          }>,
           favoritesResponse.json() as Promise<{ supplierNames?: string[] }>,
         ])
 
@@ -82,6 +108,10 @@ export default function SuppliersPage() {
         if (!cancelled) {
           setSuppliers(supplierPayload.suppliers)
           setRecommended(supplierPayload.recommended || [])
+          setTotalSuppliers(Number(supplierPayload.pagination?.total ?? supplierPayload.suppliers.length))
+          setHasNextPage(Boolean(supplierPayload.pagination?.hasNextPage))
+          const categories = supplierPayload.filters?.availableCategories || []
+          setAvailableCategories(["all", ...categories.filter((item) => item.trim().length > 0)])
           if (favoritesResponse.ok && Array.isArray(favoritesPayload.supplierNames)) {
             setFavoriteSupplierNames(favoritesPayload.supplierNames)
           }
@@ -92,7 +122,9 @@ export default function SuppliersPage() {
         }
       } finally {
         if (!cancelled) {
+          firstLoadRef.current = false
           setLoading(false)
+          setIsRefreshing(false)
         }
       }
     }
@@ -102,39 +134,24 @@ export default function SuppliersPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [page, searchTerm, selectedCategory])
 
-  const categories = useMemo(
-    () => ["all", ...Array.from(new Set(suppliers.flatMap((supplier) => supplier.categories))).sort()],
-    [suppliers],
-  )
-
-  const filteredSuppliers = useMemo(() => {
-    return suppliers.filter((supplier) => {
-      const q = searchTerm.trim().toLowerCase()
-      const matchesSearch =
-        !q ||
-        supplier.name.toLowerCase().includes(q) ||
-        supplier.specialties.some((specialty) => specialty.toLowerCase().includes(q))
-      const matchesCategory = selectedCategory === "all" || supplier.categories.includes(selectedCategory)
-      return matchesSearch && matchesCategory
-    })
-  }, [suppliers, searchTerm, selectedCategory])
+  const categories = useMemo(() => {
+    if (availableCategories.length > 0) return availableCategories
+    return ["all"]
+  }, [availableCategories])
 
   const favoriteSuppliers = useMemo(
-    () => filteredSuppliers.filter((supplier) => favoriteSupplierNames.includes(supplier.name)),
-    [filteredSuppliers, favoriteSupplierNames],
+    () => suppliers.filter((supplier) => favoriteSupplierNames.includes(supplier.name)),
+    [suppliers, favoriteSupplierNames],
   )
 
   const verifiedSuppliers = useMemo(
-    () => filteredSuppliers.filter((supplier) => supplier.verified),
-    [filteredSuppliers],
+    () => suppliers.filter((supplier) => supplier.verified),
+    [suppliers],
   )
 
-  const filteredRecommended = useMemo(
-    () => recommended.filter((supplier) => filteredSuppliers.some((item) => item.id === supplier.id)),
-    [recommended, filteredSuppliers],
-  )
+  const filteredRecommended = recommended
 
   const toggleFavorite = (supplierName: string) => {
     const isFavorite = favoriteSupplierNames.includes(supplierName)
@@ -295,7 +312,10 @@ export default function SuppliersPage() {
           <Input
             placeholder="Search suppliers or materials..."
             value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
+            onChange={(event) => {
+              setSearchTerm(event.target.value)
+              setPage(1)
+            }}
             className="pl-10"
           />
         </div>
@@ -305,7 +325,10 @@ export default function SuppliersPage() {
               key={category}
               variant={selectedCategory === category ? "default" : "outline"}
               size="sm"
-              onClick={() => setSelectedCategory(category)}
+              onClick={() => {
+                setSelectedCategory(category)
+                setPage(1)
+              }}
             >
               {category === "all" ? "All Categories" : category}
             </Button>
@@ -315,26 +338,53 @@ export default function SuppliersPage() {
 
       <Tabs defaultValue="all" className="space-y-6">
         <TabsList>
-          <TabsTrigger value="all">All ({filteredSuppliers.length})</TabsTrigger>
+          <TabsTrigger value="all">All ({totalSuppliers})</TabsTrigger>
           <TabsTrigger value="recommended">Recommended ({filteredRecommended.length})</TabsTrigger>
           <TabsTrigger value="favorites">Favorites ({favoriteSuppliers.length})</TabsTrigger>
           <TabsTrigger value="verified">Verified ({verifiedSuppliers.length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="all" className="space-y-4">
-          {loading ? (
+          {loading || isRefreshing ? (
             <Card>
               <CardContent className="flex items-center justify-center py-12 text-muted-foreground">
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 Loading supplier directory...
               </CardContent>
             </Card>
-          ) : filteredSuppliers.length === 0 ? (
+          ) : suppliers.length === 0 ? (
             <Card>
               <CardContent className="py-10 text-center text-muted-foreground">No suppliers found for current filters.</CardContent>
             </Card>
           ) : (
-            filteredSuppliers.map((supplier) => <SupplierCard key={supplier.id} supplier={supplier} />)
+            <>
+              {suppliers.map((supplier) => <SupplierCard key={supplier.id} supplier={supplier} />)}
+              <Card>
+                <CardContent className="flex items-center justify-between py-4 text-sm">
+                  <span className="text-muted-foreground">
+                    Page {page} | Showing {suppliers.length} suppliers
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page <= 1 || isRefreshing}
+                      onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!hasNextPage || isRefreshing}
+                      onClick={() => setPage((current) => current + 1)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
           )}
         </TabsContent>
 

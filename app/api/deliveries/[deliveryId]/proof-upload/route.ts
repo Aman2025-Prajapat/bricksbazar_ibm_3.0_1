@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/server/auth-user"
 import { getDeliveryById } from "@/lib/server/market-store"
+import { consumeRouteRateLimit, createRateLimitResponse } from "@/lib/server/api-rate-limit"
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 
@@ -31,6 +32,15 @@ function detectImageExtension(buffer: Uint8Array): "png" | "jpg" | "webp" | null
 }
 
 export async function POST(request: Request, { params }: { params: { deliveryId: string } }) {
+  const rateLimit = consumeRouteRateLimit(request, {
+    bucket: "api:deliveries:proof-upload",
+    limit: 40,
+    windowMs: 60_000,
+  })
+  if (!rateLimit.ok) {
+    return createRateLimitResponse("Too many upload attempts. Please retry in a minute.", rateLimit.retryAfterSec)
+  }
+
   const sessionUser = await getSessionUser()
   if (!sessionUser) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -43,7 +53,7 @@ export async function POST(request: Request, { params }: { params: { deliveryId:
 
   const canUpload =
     sessionUser.role === "admin" ||
-    sessionUser.role === "distributor" ||
+    (sessionUser.role === "distributor" && delivery.distributorId === sessionUser.userId) ||
     (sessionUser.role === "seller" && delivery.sellerId === sessionUser.userId)
 
   if (!canUpload) {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/server/auth-user"
-import { listDistributorLocations, listProducts } from "@/lib/server/market-store"
+import { listDistributorLocations, listProductsPaginated } from "@/lib/server/market-store"
 import { fairAlgorithm, type Supplier as FairSupplier } from "@/lib/fair-algorithm"
 import { listSupplierRatingStats } from "@/lib/server/supplier-rating-store"
 import { listUsers, listVerificationRequests } from "@/lib/server/user-store"
@@ -60,16 +60,35 @@ function getDescription(role: SupplierRole, categories: string[], verified: bool
   return `${base}${focus}${trust}.`
 }
 
-export async function GET() {
+function parsePage(raw: string | null, defaultValue: number) {
+  const value = Number.parseInt(raw || `${defaultValue}`, 10)
+  return Number.isFinite(value) ? Math.max(1, value) : defaultValue
+}
+
+function parseLimit(raw: string | null, defaultValue: number) {
+  const value = Number.parseInt(raw || `${defaultValue}`, 10)
+  if (!Number.isFinite(value)) return defaultValue
+  return Math.min(100, Math.max(1, value))
+}
+
+export async function GET(request: Request) {
   const sessionUser = await getSessionUser()
   if (!sessionUser || sessionUser.role !== "buyer") {
     return NextResponse.json({ error: "Only buyers can view supplier recommendations" }, { status: 403 })
   }
 
+  const url = new URL(request.url)
+  const page = parsePage(url.searchParams.get("page"), 1)
+  const limit = parseLimit(url.searchParams.get("limit"), 24)
+  const roleFilter = (url.searchParams.get("role") || "all").trim().toLowerCase()
+  const verifiedFilter = (url.searchParams.get("verified") || "all").trim().toLowerCase()
+  const categoryFilter = (url.searchParams.get("category") || "all").trim()
+  const q = (url.searchParams.get("q") || "").trim().toLowerCase()
+
   const [users, verificationRequests, products, distributorLocations, ratingStats] = await Promise.all([
     listUsers(),
     listVerificationRequests(),
-    listProducts(),
+    listProductsPaginated({ page: 1, limit: 2000 }).then((result) => result.items),
     listDistributorLocations(undefined, { activeOnly: true }),
     listSupplierRatingStats(),
   ])
@@ -183,7 +202,31 @@ export async function GET() {
     })
   }
 
-  const comparablePrices = supplierRows
+  const availableCategories = Array.from(new Set(supplierRows.flatMap((supplier) => supplier.categories))).sort((a, b) =>
+    a.localeCompare(b),
+  )
+
+  const filteredRows = supplierRows.filter((supplier) => {
+    if (roleFilter === "seller" && supplier.role !== "seller") return false
+    if (roleFilter === "distributor" && supplier.role !== "distributor") return false
+    if (verifiedFilter === "verified" && !supplier.verified) return false
+    if (verifiedFilter === "unverified" && supplier.verified) return false
+    if (categoryFilter.toLowerCase() !== "all" && !supplier.categories.includes(categoryFilter)) return false
+    if (!q) return true
+
+    const haystack = [
+      supplier.name,
+      supplier.location,
+      supplier.description,
+      ...supplier.categories,
+      ...supplier.specialties,
+    ]
+      .join(" ")
+      .toLowerCase()
+    return haystack.includes(q)
+  })
+
+  const comparablePrices = filteredRows
     .map((supplier) =>
       supplier.priceRange === "budget" ? 1 : supplier.priceRange === "mid-range" ? 0.65 : 0.35,
     )
@@ -193,7 +236,7 @@ export async function GET() {
       ? comparablePrices.reduce((sum, value) => sum + value, 0) / comparablePrices.length
       : 0.65
 
-  const suppliers = supplierRows
+  const rankedSuppliers = filteredRows
     .map((supplier) => {
       const competitiveness =
         supplier.priceRange === "budget" ? 1 : supplier.priceRange === "mid-range" ? 0.65 : 0.35
@@ -220,11 +263,27 @@ export async function GET() {
     })
     .sort((a, b) => b.fairScore - a.fairScore || Number(b.verified) - Number(a.verified) || b.rating - a.rating)
 
-  const recommended = suppliers.slice(0, 5)
+  const total = rankedSuppliers.length
+  const offset = (page - 1) * limit
+  const suppliers = rankedSuppliers.slice(offset, offset + limit)
+  const recommended = rankedSuppliers.slice(0, 5)
 
   return NextResponse.json({
     suppliers,
     recommended,
+    pagination: {
+      page,
+      limit,
+      total,
+      hasNextPage: offset + limit < total,
+    },
+    filters: {
+      q,
+      role: roleFilter,
+      verified: verifiedFilter,
+      category: categoryFilter,
+      availableCategories,
+    },
     algorithm: {
       localBoost: 0.3,
       verificationWeight: 0.2,
@@ -234,4 +293,3 @@ export async function GET() {
     },
   })
 }
-
