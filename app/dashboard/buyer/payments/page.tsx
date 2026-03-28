@@ -444,7 +444,19 @@ export default function PaymentsPage() {
             },
           })
 
-          razorpay.on("payment.failed", () => reject(new Error("Razorpay payment failed")))
+          razorpay.on("payment.failed", (response: unknown) => {
+            const failure = response as {
+              error?: {
+                description?: string
+                reason?: string
+              }
+            }
+            const failureMessage =
+              failure.error?.description ||
+              failure.error?.reason ||
+              "Razorpay payment failed. Please retry using UPI, QR, NetBanking, or Card."
+            reject(new Error(failureMessage))
+          })
           razorpay.open()
         })
 
@@ -575,6 +587,9 @@ export default function PaymentsPage() {
               </Button>
               <p className="text-xs text-muted-foreground">
                 Seller/distributor accepted request. Payment confirm hote hi order shipping/tracking start ho jayega.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Tip: Razorpay checkout me UPI, QR, NetBanking, Card options available hain. Payment fail ho to another method retry karo.
               </p>
             </>
           )}

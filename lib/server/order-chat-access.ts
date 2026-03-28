@@ -30,7 +30,7 @@ export async function getOrderChatAccessContext(input: { sessionUser: SessionUse
     input.sessionUser.role === "admin" ||
     (input.sessionUser.role === "buyer" && order.buyerId === input.sessionUser.userId) ||
     (input.sessionUser.role === "seller" && linkedSellerIds.includes(input.sessionUser.userId)) ||
-    input.sessionUser.role === "distributor"
+    (input.sessionUser.role === "distributor" && delivery?.distributorId === input.sessionUser.userId)
 
   if (!canAccess) {
     return { context: null, status: 403 as const, error: "Forbidden" }
