@@ -8,6 +8,10 @@ export type StoredCartItem = {
   supplier: string
   supplierId?: string
   supplierVerified?: boolean
+  supplierRole?: "seller" | "distributor"
+  minOrderQty?: number
+  maxOrderQty?: number
+  bulkOnly?: boolean
   image: string
   inStock: boolean
 }
@@ -34,6 +38,12 @@ function isValidItem(value: unknown): value is StoredCartItem {
     typeof item.supplier === "string" &&
     (item.supplierId === undefined || typeof item.supplierId === "string") &&
     (item.supplierVerified === undefined || typeof item.supplierVerified === "boolean") &&
+    (item.supplierRole === undefined || item.supplierRole === "seller" || item.supplierRole === "distributor") &&
+    (item.minOrderQty === undefined ||
+      (typeof item.minOrderQty === "number" && Number.isInteger(item.minOrderQty) && item.minOrderQty > 0)) &&
+    (item.maxOrderQty === undefined ||
+      (typeof item.maxOrderQty === "number" && Number.isInteger(item.maxOrderQty) && item.maxOrderQty > 0)) &&
+    (item.bulkOnly === undefined || typeof item.bulkOnly === "boolean") &&
     typeof item.image === "string" &&
     typeof item.inStock === "boolean"
   )
@@ -81,6 +91,10 @@ export function addToCart(item: Omit<StoredCartItem, "quantity">, quantity = 1) 
             supplier: item.supplier,
             supplierId: item.supplierId,
             supplierVerified: item.supplierVerified,
+            supplierRole: item.supplierRole,
+            minOrderQty: item.minOrderQty,
+            maxOrderQty: item.maxOrderQty,
+            bulkOnly: item.bulkOnly,
             image: item.image,
             inStock: item.inStock,
           }

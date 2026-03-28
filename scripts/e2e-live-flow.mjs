@@ -154,8 +154,15 @@ async function main() {
     },
   })
   distributorUserId = distributorLogin.data?.user?.id || ""
+  const distributorNeedsApproval = distributorLogin.ok && distributorLogin.data?.requiresApproval === true
 
-  if (!distributorLogin.ok && distributorLogin.status === 403 && adminEmail && adminPassword) {
+  if ((!distributorLogin.ok && distributorLogin.status === 403) || distributorNeedsApproval) {
+    if (!adminEmail || !adminPassword) {
+      throw new Error(
+        "distributor account requires admin approval. Set E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD for automated approval.",
+      )
+    }
+
     const adminLogin = await apiRequest(admin, "/api/auth/login", {
       method: "POST",
       json: { email: adminEmail, password: adminPassword },
@@ -184,6 +191,9 @@ async function main() {
       json: { email: distributorEmail, password },
     })
     await assertOk("distributor login after approval", distributorLoginRetry)
+    if (distributorLoginRetry.data?.requiresApproval) {
+      throw new Error("distributor still pending verification even after admin approval")
+    }
     distributorUserId = distributorLoginRetry.data?.user?.id || distributorUserId
   } else if (!distributorLogin.ok) {
     throw new Error(`distributor login failed (${distributorLogin.status}): ${JSON.stringify(distributorLogin.data)}`)

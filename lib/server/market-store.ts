@@ -14,6 +14,10 @@ export type Product = {
   unit: string
   stock: number
   minStock: number
+  minOrderQty: number
+  maxOrderQty: number
+  bulkOnly: boolean
+  operatorRole: "seller" | "distributor"
   status: ProductStatus
   rating: number
   image: string
@@ -230,6 +234,10 @@ type ProductRow = {
   unit: string
   stock: number
   min_stock: number
+  min_order_qty: number
+  max_order_qty: number
+  bulk_only: number
+  operator_role: "seller" | "distributor"
   status: ProductStatus
   rating: number
   image: string
@@ -442,6 +450,10 @@ function mapProduct(row: ProductRow): Product {
     unit: row.unit,
     stock: Number(row.stock),
     minStock: Number(row.min_stock),
+    minOrderQty: Math.max(1, Number(row.min_order_qty)),
+    maxOrderQty: Math.max(1, Number(row.max_order_qty)),
+    bulkOnly: Number(row.bulk_only) === 1,
+    operatorRole: row.operator_role === "distributor" ? "distributor" : "seller",
     status: row.status,
     rating: Number(row.rating),
     image: row.image,
@@ -728,7 +740,7 @@ function buildDefaultDeliveryFromOrder(
 }
 
 function getSeedProducts(now: string) {
-  return [
+  const baseProducts = [
     {
       id: "mp-prod-001",
       name: "Fly Ash Bricks 9x4x3",
@@ -890,6 +902,14 @@ function getSeedProducts(now: string) {
       updatedAt: now,
     },
   ]
+
+  return baseProducts.map((product) => ({
+    ...product,
+    minOrderQty: 1,
+    maxOrderQty: 5000,
+    bulkOnly: false,
+    operatorRole: "seller" as const,
+  }))
 }
 
 async function ensureMarketTables() {
@@ -904,6 +924,10 @@ async function ensureMarketTables() {
       unit TEXT NOT NULL,
       stock INTEGER NOT NULL,
       min_stock INTEGER NOT NULL,
+      min_order_qty INTEGER NOT NULL DEFAULT 1,
+      max_order_qty INTEGER NOT NULL DEFAULT 100000,
+      bulk_only INTEGER NOT NULL DEFAULT 0,
+      operator_role TEXT NOT NULL DEFAULT 'seller',
       status TEXT NOT NULL,
       rating REAL NOT NULL,
       image TEXT NOT NULL,
@@ -913,6 +937,11 @@ async function ensureMarketTables() {
       updated_at TEXT NOT NULL
     )
   `)
+
+  await safeAddColumn("market_products", "min_order_qty INTEGER NOT NULL DEFAULT 1")
+  await safeAddColumn("market_products", "max_order_qty INTEGER NOT NULL DEFAULT 100000")
+  await safeAddColumn("market_products", "bulk_only INTEGER NOT NULL DEFAULT 0")
+  await safeAddColumn("market_products", "operator_role TEXT NOT NULL DEFAULT 'seller'")
 
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS market_orders (
@@ -1099,6 +1128,7 @@ async function ensureMarketTables() {
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_products_category_idx ON market_products(category)")
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_products_seller_idx ON market_products(seller_id)")
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_products_status_idx ON market_products(status)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_products_operator_role_idx ON market_products(operator_role)")
 
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_orders_status_date_idx ON market_orders(status, date)")
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_orders_buyer_date_idx ON market_orders(buyer_id, date)")
@@ -1161,8 +1191,8 @@ async function ensureMarketTables() {
   for (const product of getSeedProducts(now)) {
     await prisma.$executeRawUnsafe(
       `INSERT INTO market_products
-       (id, name, category, price, unit, stock, min_stock, status, rating, image, seller_id, seller_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (id, name, category, price, unit, stock, min_stock, min_order_qty, max_order_qty, bulk_only, operator_role, status, rating, image, seller_id, seller_name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO NOTHING`,
       product.id,
       product.name,
@@ -1171,6 +1201,10 @@ async function ensureMarketTables() {
       product.unit,
       product.stock,
       product.minStock,
+      product.minOrderQty,
+      product.maxOrderQty,
+      product.bulkOnly ? 1 : 0,
+      product.operatorRole,
       product.status,
       product.rating,
       product.image,
@@ -1306,7 +1340,7 @@ export async function listProductsPaginated(input?: {
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
   const rows = await prisma.$queryRawUnsafe<ProductRow[]>(
-    `SELECT id, name, category, price, unit, stock, min_stock, status, rating, image, seller_id, seller_name, created_at, updated_at
+    `SELECT id, name, category, price, unit, stock, min_stock, min_order_qty, max_order_qty, bulk_only, operator_role, status, rating, image, seller_id, seller_name, created_at, updated_at
      FROM market_products
      ${whereSql}
      ORDER BY updated_at DESC
@@ -1344,8 +1378,8 @@ export async function createProduct(input: Omit<Product, "id" | "createdAt" | "u
 
   await prisma.$executeRawUnsafe(
     `INSERT INTO market_products
-     (id, name, category, price, unit, stock, min_stock, status, rating, image, seller_id, seller_name, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, name, category, price, unit, stock, min_stock, min_order_qty, max_order_qty, bulk_only, operator_role, status, rating, image, seller_id, seller_name, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     input.name,
     input.category,
@@ -1353,6 +1387,10 @@ export async function createProduct(input: Omit<Product, "id" | "createdAt" | "u
     input.unit,
     input.stock,
     input.minStock,
+    input.minOrderQty,
+    input.maxOrderQty,
+    input.bulkOnly ? 1 : 0,
+    input.operatorRole,
     input.status,
     input.rating,
     input.image,
@@ -1880,6 +1918,103 @@ export async function markOrderPaymentPaid(input: {
   })
 
   return settled
+}
+
+export async function upsertImportedOrderPayment(input: {
+  orderId: string
+  buyerId: string
+  amount: number
+  method: string
+  status: PaymentStatus
+  provider?: PaymentProvider
+  gatewayTransactionId?: string
+  gatewayPayload?: string
+  createdAt?: string
+  verifiedAt?: string
+}) {
+  await ensureMarketTables()
+
+  const now = new Date().toISOString()
+  const createdAt = input.createdAt || now
+  const verifiedAt = input.status === "paid" ? input.verifiedAt || createdAt : null
+
+  const result = await prisma.$transaction(async (tx) => {
+    const paymentRows = await tx.$queryRawUnsafe<PaymentRow[]>(
+      `SELECT id, order_id, user_id, amount, method, status, provider, payment_intent_id, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, created_at
+       FROM market_payments
+       WHERE order_id = ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      input.orderId,
+    )
+
+    if (paymentRows.length > 0) {
+      const existing = paymentRows[0]
+      await tx.$executeRawUnsafe(
+        `UPDATE market_payments
+         SET user_id = ?, amount = ?, method = ?, status = ?, provider = ?, gateway_transaction_id = ?, gateway_payload = ?, verified_at = ?
+         WHERE id = ?`,
+        input.buyerId,
+        input.amount,
+        input.method,
+        input.status,
+        input.provider ?? "manual",
+        input.gatewayTransactionId ?? existing.gateway_transaction_id ?? null,
+        input.gatewayPayload ?? existing.gateway_payload ?? null,
+        verifiedAt,
+        existing.id,
+      )
+
+      const updatedRows = await tx.$queryRawUnsafe<PaymentRow[]>(
+        `SELECT id, order_id, user_id, amount, method, status, provider, payment_intent_id, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, created_at
+         FROM market_payments
+         WHERE id = ?
+         LIMIT 1`,
+        existing.id,
+      )
+
+      return {
+        action: "updated" as const,
+        payment: updatedRows.length > 0 ? mapPayment(updatedRows[0]) : null,
+      }
+    }
+
+    const newId = crypto.randomUUID()
+    await tx.$executeRawUnsafe(
+      `INSERT INTO market_payments
+       (id, order_id, user_id, amount, method, status, provider, payment_intent_id, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      newId,
+      input.orderId,
+      input.buyerId,
+      input.amount,
+      input.method,
+      input.status,
+      input.provider ?? "manual",
+      null,
+      null,
+      input.gatewayTransactionId ?? null,
+      null,
+      input.gatewayPayload ?? null,
+      verifiedAt,
+      createdAt,
+    )
+
+    const createdRows = await tx.$queryRawUnsafe<PaymentRow[]>(
+      `SELECT id, order_id, user_id, amount, method, status, provider, payment_intent_id, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, created_at
+       FROM market_payments
+       WHERE id = ?
+       LIMIT 1`,
+      newId,
+    )
+
+    return {
+      action: "created" as const,
+      payment: createdRows.length > 0 ? mapPayment(createdRows[0]) : null,
+    }
+  })
+
+  return result
 }
 
 export async function createPaymentIntent(input: {
@@ -2499,7 +2634,7 @@ export async function createOrder(input: {
 
     for (const line of input.items) {
       const productRows = await tx.$queryRawUnsafe<ProductRow[]>(
-        "SELECT id, name, category, price, unit, stock, min_stock, status, rating, image, seller_id, seller_name, created_at, updated_at FROM market_products WHERE id = ? LIMIT 1",
+        "SELECT id, name, category, price, unit, stock, min_stock, min_order_qty, max_order_qty, bulk_only, operator_role, status, rating, image, seller_id, seller_name, created_at, updated_at FROM market_products WHERE id = ? LIMIT 1",
         line.productId,
       )
       const product = productRows.length ? mapProduct(productRows[0]) : null
@@ -2509,6 +2644,15 @@ export async function createOrder(input: {
       }
       if (line.quantity <= 0) {
         throw new Error("Quantity must be greater than zero")
+      }
+      if (line.quantity < product.minOrderQty) {
+        const supplierLabel = product.operatorRole === "distributor" ? "distributor" : "seller"
+        throw new Error(
+          `${product.name} minimum order is ${product.minOrderQty} units for ${supplierLabel} supply`,
+        )
+      }
+      if (line.quantity > product.maxOrderQty) {
+        throw new Error(`${product.name} maximum order limit is ${product.maxOrderQty} units per request`)
       }
       if (product.stock < line.quantity) {
         throw new Error(`Insufficient stock for ${product.name}`)

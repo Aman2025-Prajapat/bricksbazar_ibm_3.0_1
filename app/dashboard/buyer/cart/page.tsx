@@ -94,11 +94,20 @@ export default function CartPage() {
     return Array.from(byName.entries()).map(([name, verified]) => ({ name, verified }))
   }, [cartItems])
 
+  const getMinQty = (item: CartItem) => Math.max(1, item.minOrderQty || 1)
+  const getMaxQty = (item: CartItem) => Math.max(getMinQty(item), item.maxOrderQty || 100000)
+
   const updateQuantity = (productId: string, newQuantity: number) => {
-    if (!Number.isInteger(newQuantity) || newQuantity <= 0) return
+    if (!Number.isInteger(newQuantity)) return
 
     setCartItems((items) => {
-      const next = items.map((item) => (item.productId === productId ? { ...item, quantity: newQuantity } : item))
+      const next = items.map((item) => {
+        if (item.productId !== productId) return item
+        const min = getMinQty(item)
+        const max = getMaxQty(item)
+        const clamped = Math.min(max, Math.max(min, newQuantity))
+        return { ...item, quantity: clamped }
+      })
       saveCart(next)
       return next
     })
@@ -223,6 +232,9 @@ export default function CartPage() {
                                 Verified Seller
                               </Badge>
                             ) : null}
+                            <Badge variant={item.bulkOnly ? "default" : "outline"}>
+                              {item.bulkOnly ? "Bulk Order" : "Mixed Order"}
+                            </Badge>
                           </div>
                         </div>
                         <Button
@@ -237,17 +249,30 @@ export default function CartPage() {
 
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <Button variant="outline" size="sm" onClick={() => updateQuantity(item.productId, item.quantity - 1)}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => updateQuantity(item.productId, item.quantity - 1)}
+                            disabled={item.quantity <= getMinQty(item)}
+                          >
                             <Minus className="h-4 w-4" />
                           </Button>
                           <Input
                             type="number"
-                            min={1}
+                            min={getMinQty(item)}
+                            max={getMaxQty(item)}
                             value={item.quantity}
-                            onChange={(event) => updateQuantity(item.productId, Number.parseInt(event.target.value, 10) || 1)}
+                            onChange={(event) =>
+                              updateQuantity(item.productId, Number.parseInt(event.target.value, 10) || getMinQty(item))
+                            }
                             className="w-20 text-center"
                           />
-                          <Button variant="outline" size="sm" onClick={() => updateQuantity(item.productId, item.quantity + 1)}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => updateQuantity(item.productId, item.quantity + 1)}
+                            disabled={item.quantity >= getMaxQty(item)}
+                          >
                             <Plus className="h-4 w-4" />
                           </Button>
                           <span className="text-sm text-muted-foreground">{item.unit}</span>
@@ -257,6 +282,9 @@ export default function CartPage() {
                           <p className="text-lg font-semibold">Rs. {(item.price * item.quantity).toLocaleString()}</p>
                           <p className="text-sm text-muted-foreground">
                             Rs. {item.price} per {item.unit}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Min {getMinQty(item)} | Max {getMaxQty(item)}
                           </p>
                         </div>
                       </div>

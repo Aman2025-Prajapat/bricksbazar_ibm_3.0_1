@@ -20,6 +20,10 @@ type ApiProduct = {
   unit: string
   stock: number
   minStock: number
+  minOrderQty: number
+  maxOrderQty: number
+  bulkOnly: boolean
+  operatorRole: "seller" | "distributor"
   status: "active" | "out_of_stock"
   rating: number
   image: string
@@ -94,6 +98,8 @@ export default function BuyerProductsPage() {
   const handleAddToCart = (product: ApiProduct) => {
     if (product.stock <= 0) return
 
+    const minOrderQty = Math.max(1, product.minOrderQty || 1)
+
     addToCart({
       productId: product.id,
       name: product.name,
@@ -103,10 +109,16 @@ export default function BuyerProductsPage() {
       supplier: product.sellerName,
       supplierId: product.sellerId,
       supplierVerified: product.sellerVerified === true,
+      supplierRole: product.operatorRole,
+      minOrderQty: minOrderQty,
+      maxOrderQty: Math.max(minOrderQty, product.maxOrderQty || product.stock),
+      bulkOnly: product.bulkOnly === true,
       image: product.image || "/placeholder.svg",
       inStock: product.stock > 0,
-    })
-    setCartMessage(`${product.name} added to cart.`)
+    }, minOrderQty)
+    setCartMessage(
+      `${product.name} added to cart${minOrderQty > 1 ? ` with minimum ${minOrderQty} quantity` : ""}.`,
+    )
   }
 
   return (
@@ -191,6 +203,9 @@ export default function BuyerProductsPage() {
                         </div>
                         <div className="mt-1 flex items-center gap-2">
                           <Badge variant="outline">{product.category}</Badge>
+                          <Badge variant={product.bulkOnly ? "default" : "secondary"}>
+                            {product.bulkOnly ? "Bulk Order" : "Retail + Bulk"}
+                          </Badge>
                           <Badge variant={product.stock > 0 ? "default" : "destructive"}>
                             {product.stock > 0 ? "In Stock" : "Out of Stock"}
                           </Badge>
@@ -203,6 +218,9 @@ export default function BuyerProductsPage() {
                       <div className="text-right space-y-2">
                         <p className="text-lg font-bold">Rs. {product.price.toLocaleString()}</p>
                         <p className="text-sm text-muted-foreground">per {product.unit}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Min: {Math.max(1, product.minOrderQty || 1)} | Max: {Math.max(1, product.maxOrderQty || product.stock)}
+                        </p>
                         <p className="text-xs text-muted-foreground mt-1">Stock: {product.stock.toLocaleString()}</p>
                         <Button
                           size="sm"

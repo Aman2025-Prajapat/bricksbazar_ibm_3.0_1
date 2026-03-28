@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { Users, Package, ShoppingCart, TrendingUp, CreditCard, FolderKanban, RefreshCw } from "lucide-react"
+import { Users, Package, ShoppingCart, TrendingUp, CreditCard, FolderKanban, RefreshCw, Database, Upload } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -248,7 +248,7 @@ export default function AdminDashboard() {
           <CardDescription>Direct links to core control panels</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-7">
             <Link href="/dashboard/admin/users">
               <Button variant="outline" className="h-20 w-full flex-col gap-2 bg-transparent">
                 <Users className="h-5 w-5" />
@@ -271,6 +271,18 @@ export default function AdminDashboard() {
               <Button variant="outline" className="h-20 w-full flex-col gap-2 bg-transparent">
                 <CreditCard className="h-5 w-5" />
                 Payments
+              </Button>
+            </Link>
+            <Link href="/dashboard/admin/db-overview">
+              <Button variant="outline" className="h-20 w-full flex-col gap-2 bg-transparent">
+                <Database className="h-5 w-5" />
+                DB Overview
+              </Button>
+            </Link>
+            <Link href="/dashboard/admin/imports">
+              <Button variant="outline" className="h-20 w-full flex-col gap-2 bg-transparent">
+                <Upload className="h-5 w-5" />
+                CSV Imports
               </Button>
             </Link>
             <Link href="/dashboard/admin/reports">

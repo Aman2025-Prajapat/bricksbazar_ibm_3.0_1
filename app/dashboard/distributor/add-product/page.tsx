@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import type React from "react"
 
@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Loader2, Package, DollarSign } from "lucide-react"
 
-export default function AddProductPage() {
+export default function AddDistributorProductPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -22,11 +22,11 @@ export default function AddProductPage() {
     name: "",
     category: "",
     price: "",
-    unit: "per piece",
+    unit: "per unit",
     stock: "",
     minStock: "",
-    minOrderQty: "1",
-    maxOrderQty: "5000",
+    minOrderQty: "50",
+    maxOrderQty: "100000",
     image: "/placeholder.svg",
     description: "",
     specifications: "",
@@ -52,23 +52,23 @@ export default function AddProductPage() {
           unit: productData.unit,
           stock: Number.parseInt(productData.stock, 10),
           minStock: Number.parseInt(productData.minStock || "0", 10),
-          minOrderQty: Number.parseInt(productData.minOrderQty || "1", 10),
-          maxOrderQty: Number.parseInt(productData.maxOrderQty || "5000", 10),
-          bulkOnly: false,
+          minOrderQty: Number.parseInt(productData.minOrderQty || "50", 10),
+          maxOrderQty: Number.parseInt(productData.maxOrderQty || "100000", 10),
+          bulkOnly: true,
+          operatorRole: "distributor",
           image: productData.image || "/placeholder.svg",
         }),
       })
 
       const payload = (await response.json()) as { product?: { id: string }; error?: string }
-
       if (!response.ok || !payload.product) {
-        throw new Error(payload.error || "Could not create product")
+        throw new Error(payload.error || "Could not create bulk product")
       }
 
-      setSuccess("Product published successfully.")
-      setTimeout(() => router.push("/dashboard/seller/products"), 800)
+      setSuccess("Bulk product published successfully.")
+      setTimeout(() => router.push("/dashboard/distributor/products"), 800)
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Could not create product")
+      setError(submitError instanceof Error ? submitError.message : "Could not create bulk product")
     } finally {
       setLoading(false)
     }
@@ -77,8 +77,8 @@ export default function AddProductPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Add New Product</h1>
-        <p className="text-muted-foreground">Publish a product to your live seller inventory</p>
+        <h1 className="text-3xl font-bold tracking-tight">Add Bulk Product</h1>
+        <p className="text-muted-foreground">Publish distributor inventory with wholesale quantity controls</p>
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -92,7 +92,7 @@ export default function AddProductPage() {
                 <Package className="h-5 w-5" />
                 Basic Information
               </CardTitle>
-              <CardDescription>Core product details used in catalog and ordering.</CardDescription>
+              <CardDescription>Core product details used in distributor catalog.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
@@ -100,7 +100,7 @@ export default function AddProductPage() {
                 <Input
                   id="name"
                   required
-                  placeholder="e.g., Premium Red Bricks"
+                  placeholder="e.g., Bulk OPC Cement 53 Grade"
                   value={productData.name}
                   onChange={(event) => setProductData((prev) => ({ ...prev, name: event.target.value }))}
                 />
@@ -244,7 +244,9 @@ export default function AddProductPage() {
         </div>
 
         <div className="flex justify-end gap-4">
-          <Button type="button" variant="outline" onClick={() => router.push("/dashboard/seller/products")}>Cancel</Button>
+          <Button type="button" variant="outline" onClick={() => router.push("/dashboard/distributor/products")}>
+            Cancel
+          </Button>
           <Button type="submit" disabled={loading}>
             {loading ? (
               <>
@@ -252,7 +254,7 @@ export default function AddProductPage() {
                 Publishing...
               </>
             ) : (
-              "Publish Product"
+              "Publish Bulk Product"
             )}
           </Button>
         </div>

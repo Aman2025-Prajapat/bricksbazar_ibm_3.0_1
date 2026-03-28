@@ -68,6 +68,18 @@ function assignLocation(orderId: string, locationsLength: number) {
   return hashValue(orderId) % locationsLength
 }
 
+function computeLoadPercent(activeOrders: number, radiusKm: number) {
+  const capacityBaseline = Math.max(1, radiusKm * 1.8)
+  return Math.min(100, Math.round((activeOrders / capacityBaseline) * 100))
+}
+
+function computeSlaRisk(loadPercent: number, status: LocationStatus) {
+  if (status !== "active") return "High"
+  if (loadPercent >= 85) return "High"
+  if (loadPercent >= 60) return "Medium"
+  return "Low"
+}
+
 export default function LocationManagementPage() {
   const [locations, setLocations] = useState<LocationRecord[]>([])
   const [orders, setOrders] = useState<ApiOrder[]>([])
@@ -478,6 +490,8 @@ export default function LocationManagementPage() {
                   <TableHead>Delivery Time</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Active Orders</TableHead>
+                  <TableHead>Load</TableHead>
+                  <TableHead>SLA Risk</TableHead>
                   <TableHead>Total Deliveries</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -485,6 +499,8 @@ export default function LocationManagementPage() {
               <TableBody>
                 {visibleLocations.map((location) => {
                   const metrics = metricsByLocation.get(location.id) || { activeOrders: 0, totalDeliveries: 0 }
+                  const loadPercent = computeLoadPercent(metrics.activeOrders, location.radiusKm)
+                  const slaRisk = computeSlaRisk(loadPercent, location.status)
 
                   return (
                     <TableRow key={location.id}>
@@ -495,6 +511,25 @@ export default function LocationManagementPage() {
                       <TableCell>{getStatusBadge(location.status)}</TableCell>
                       <TableCell>
                         <Badge variant="outline">{metrics.activeOrders}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="min-w-[120px]">
+                          <div className="flex justify-between text-xs mb-1">
+                            <span>{loadPercent}%</span>
+                            <span>{loadPercent >= 85 ? "High" : loadPercent >= 60 ? "Medium" : "Normal"}</span>
+                          </div>
+                          <div className="w-full bg-muted rounded-full h-2">
+                            <div
+                              className={`h-2 rounded-full ${loadPercent >= 85 ? "bg-red-500" : loadPercent >= 60 ? "bg-yellow-500" : "bg-green-500"}`}
+                              style={{ width: `${loadPercent}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={slaRisk === "High" ? "destructive" : slaRisk === "Medium" ? "secondary" : "outline"}>
+                          {slaRisk}
+                        </Badge>
                       </TableCell>
                       <TableCell>{metrics.totalDeliveries}</TableCell>
                       <TableCell>

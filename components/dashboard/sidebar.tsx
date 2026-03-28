@@ -23,6 +23,8 @@ import {
   Bell,
   Warehouse,
   TrendingUp,
+  Database,
+  Upload,
 } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
@@ -56,8 +58,11 @@ const sellerNavItems = [
 
 const distributorNavItems = [
   { href: "/dashboard/distributor", icon: BarChart3, label: "Dashboard" },
+  { href: "/dashboard/distributor/products", icon: Package, label: "Bulk Products" },
+  { href: "/dashboard/distributor/add-product", icon: Plus, label: "Add Bulk Product" },
   { href: "/dashboard/distributor/requests", icon: Bell, label: "All Requests" },
   { href: "/dashboard/distributor/deliveries", icon: Truck, label: "Deliveries" },
+  { href: "/dashboard/distributor/tracking", icon: MapPin, label: "Live Tracking" },
   { href: "/dashboard/distributor/locations", icon: MapPin, label: "Location Management" },
   { href: "/dashboard/distributor/analytics", icon: TrendingUp, label: "Analytics" },
   { href: "/dashboard/distributor/smart-tools", icon: Building2, label: "Smart Tools" },
@@ -73,6 +78,8 @@ const adminNavItems = [
   { href: "/dashboard/admin/products", icon: Package, label: "All Products" },
   { href: "/dashboard/admin/orders", icon: ShoppingCart, label: "All Orders" },
   { href: "/dashboard/admin/fair-algorithm", icon: Scale, label: "Fair Algorithm" },
+  { href: "/dashboard/admin/db-overview", icon: Database, label: "DB Overview" },
+  { href: "/dashboard/admin/imports", icon: Upload, label: "CSV Imports" },
   { href: "/dashboard/admin/payments", icon: CreditCard, label: "Payment Management" },
   { href: "/dashboard/admin/faq", icon: HelpCircle, label: "FAQ Management" },
 ]

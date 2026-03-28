@@ -22,6 +22,7 @@ const updateOrderSchema = z.object({
   driverName: z.string().min(2).max(120).optional(),
   driverPhone: z.string().min(7).max(30).optional(),
   etaMinutes: z.number().int().min(0).max(24 * 60).optional(),
+  allowUnpaidDispatch: z.boolean().optional(),
 })
 
 const allowedTransitions: Record<OrderStatus, OrderStatus[]> = {
@@ -63,7 +64,10 @@ export async function PATCH(request: Request, { params }: { params: { orderId: s
     )
   }
 
-  if (nextStatus === "shipped" || nextStatus === "delivered") {
+  const canBypassPaymentForDispatch =
+    parsed.data.allowUnpaidDispatch === true && sessionUser.role === "distributor" && nextStatus === "shipped"
+
+  if ((nextStatus === "shipped" || nextStatus === "delivered") && !canBypassPaymentForDispatch) {
     const payment = await getPaymentByOrderId(order.id)
     if (!payment || payment.status !== "paid") {
       return NextResponse.json(

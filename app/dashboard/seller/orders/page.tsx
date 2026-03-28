@@ -49,6 +49,16 @@ type TrackingPayload = {
   error?: string
 }
 
+type DeliveryPlanDraft = {
+  estimatedDelivery: string
+  distributorName: string
+  vehicleType: string
+  vehicleNumber: string
+  driverName: string
+  driverPhone: string
+  etaMinutes: string
+}
+
 export default function SellerOrdersPage() {
   const [orders, setOrders] = useState<ApiOrder[]>([])
   const [loading, setLoading] = useState(true)
@@ -57,6 +67,7 @@ export default function SellerOrdersPage() {
   const [selectedStatus, setSelectedStatus] = useState("all")
   const [trackingOrderId, setTrackingOrderId] = useState<string | null>(null)
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null)
+  const [planningByOrderId, setPlanningByOrderId] = useState<Record<string, DeliveryPlanDraft>>({})
   const [chatOrderId, setChatOrderId] = useState<string | null>(null)
   const [chatOrderNumber, setChatOrderNumber] = useState("")
 
@@ -129,6 +140,29 @@ export default function SellerOrdersPage() {
     [orders, searchTerm, selectedStatus],
   )
 
+  useEffect(() => {
+    if (!orders.length) {
+      setPlanningByOrderId({})
+      return
+    }
+
+    setPlanningByOrderId((current) => {
+      const next: Record<string, DeliveryPlanDraft> = {}
+      for (const order of orders) {
+        next[order.id] = current[order.id] || {
+          estimatedDelivery: order.estimatedDelivery.slice(0, 10),
+          distributorName: order.distributorName || "MP Logistics Dispatch",
+          vehicleType: order.vehicleType || "Truck",
+          vehicleNumber: "",
+          driverName: "",
+          driverPhone: "",
+          etaMinutes: "180",
+        }
+      }
+      return next
+    })
+  }, [orders])
+
   const openLiveTracking = async (order: ApiOrder) => {
     setTrackingOrderId(order.id)
     try {
@@ -155,7 +189,37 @@ export default function SellerOrdersPage() {
     }
   }
 
-  const updateOrderStatus = async (orderId: string, status: "confirmed" | "shipped" | "delivered" | "cancelled") => {
+  const updatePlanningField = (orderId: string, key: keyof DeliveryPlanDraft, value: string) => {
+    setPlanningByOrderId((current) => ({
+      ...current,
+      [orderId]: {
+        ...(current[orderId] || {
+          estimatedDelivery: "",
+          distributorName: "MP Logistics Dispatch",
+          vehicleType: "Truck",
+          vehicleNumber: "",
+          driverName: "",
+          driverPhone: "",
+          etaMinutes: "180",
+        }),
+        [key]: value,
+      },
+    }))
+  }
+
+  const updateOrder = async (
+    orderId: string,
+    payload: {
+      status?: "pending" | "confirmed" | "shipped" | "delivered" | "cancelled"
+      estimatedDelivery?: string
+      distributorName?: string
+      vehicleType?: string
+      vehicleNumber?: string
+      driverName?: string
+      driverPhone?: string
+      etaMinutes?: number
+    },
+  ) => {
     setUpdatingOrderId(orderId)
     setError("")
     try {
@@ -163,17 +227,33 @@ export default function SellerOrdersPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(payload),
       })
-      const payload = (await response.json()) as { error?: string }
+      const responsePayload = (await response.json()) as { error?: string }
       if (!response.ok) {
-        throw new Error(payload.error || "Could not update order")
+        throw new Error(responsePayload.error || "Could not update order")
       }
       await reloadOrders()
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Could not update order")
     } finally {
       setUpdatingOrderId(null)
+    }
+  }
+
+  const getPlanPayload = (orderId: string) => {
+    const plan = planningByOrderId[orderId]
+    if (!plan) return {}
+    return {
+      estimatedDelivery: plan.estimatedDelivery
+        ? new Date(`${plan.estimatedDelivery}T09:00:00+05:30`).toISOString()
+        : undefined,
+      distributorName: plan.distributorName.trim() || undefined,
+      vehicleType: plan.vehicleType.trim() || undefined,
+      vehicleNumber: plan.vehicleNumber.trim() || undefined,
+      driverName: plan.driverName.trim() || undefined,
+      driverPhone: plan.driverPhone.trim() || undefined,
+      etaMinutes: Number.isFinite(Number(plan.etaMinutes)) ? Number(plan.etaMinutes) : undefined,
     }
   }
 
@@ -295,6 +375,46 @@ export default function SellerOrdersPage() {
                   </div>
                 </div>
 
+                {order.status !== "delivered" && order.status !== "cancelled" ? (
+                  <div className="mt-4 border rounded-lg p-3">
+                    <p className="text-sm font-medium mb-2">Delivery Planning (Seller + Distributor Sync)</p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <Input
+                        type="date"
+                        value={planningByOrderId[order.id]?.estimatedDelivery || ""}
+                        onChange={(event) => updatePlanningField(order.id, "estimatedDelivery", event.target.value)}
+                      />
+                      <Input
+                        placeholder="Distributor name"
+                        value={planningByOrderId[order.id]?.distributorName || ""}
+                        onChange={(event) => updatePlanningField(order.id, "distributorName", event.target.value)}
+                      />
+                      <Input
+                        placeholder="Vehicle type"
+                        value={planningByOrderId[order.id]?.vehicleType || ""}
+                        onChange={(event) => updatePlanningField(order.id, "vehicleType", event.target.value)}
+                      />
+                      <Input
+                        placeholder="Vehicle number"
+                        value={planningByOrderId[order.id]?.vehicleNumber || ""}
+                        onChange={(event) => updatePlanningField(order.id, "vehicleNumber", event.target.value.toUpperCase())}
+                      />
+                      <Input
+                        placeholder="Driver name"
+                        value={planningByOrderId[order.id]?.driverName || ""}
+                        onChange={(event) => updatePlanningField(order.id, "driverName", event.target.value)}
+                      />
+                      <Input
+                        placeholder="Driver phone"
+                        value={planningByOrderId[order.id]?.driverPhone || ""}
+                        onChange={(event) =>
+                          updatePlanningField(order.id, "driverPhone", event.target.value.replace(/[^0-9+]/g, ""))
+                        }
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="flex gap-2 mt-6 pt-4 border-t flex-wrap">
                   <Button variant="outline" size="sm" className="gap-2 bg-transparent">
                     <Eye className="h-4 w-4" />
@@ -322,13 +442,32 @@ export default function SellerOrdersPage() {
                     {trackingOrderId === order.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Navigation className="h-4 w-4" />}
                     Track Live
                   </Button>
+                  {order.status !== "delivered" && order.status !== "cancelled" ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="bg-transparent"
+                      disabled={updatingOrderId === order.id}
+                      onClick={() => updateOrder(order.id, { ...getPlanPayload(order.id), status: order.status })}
+                    >
+                      {updatingOrderId === order.id ? "Updating..." : "Save Delivery Plan"}
+                    </Button>
+                  ) : null}
                   {order.status === "pending" ? (
-                    <Button size="sm" disabled={updatingOrderId === order.id} onClick={() => updateOrderStatus(order.id, "confirmed")}>
+                    <Button
+                      size="sm"
+                      disabled={updatingOrderId === order.id}
+                      onClick={() => updateOrder(order.id, { status: "confirmed", ...getPlanPayload(order.id) })}
+                    >
                       {updatingOrderId === order.id ? "Updating..." : "Confirm Order"}
                     </Button>
                   ) : null}
                   {order.status === "confirmed" ? (
-                    <Button size="sm" disabled={updatingOrderId === order.id} onClick={() => updateOrderStatus(order.id, "shipped")}>
+                    <Button
+                      size="sm"
+                      disabled={updatingOrderId === order.id}
+                      onClick={() => updateOrder(order.id, { status: "shipped", ...getPlanPayload(order.id) })}
+                    >
                       {updatingOrderId === order.id ? "Updating..." : "Mark Shipped"}
                     </Button>
                   ) : null}

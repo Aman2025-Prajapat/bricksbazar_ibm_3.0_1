@@ -77,13 +77,15 @@ function toType(total: number): string {
 function mapOrderToRequest(order: ApiOrder): RequestRecord {
   const totalQuantity = order.items.reduce((sum, item) => sum + item.quantity, 0)
   const leadProduct = order.items[0]?.productName || "Mixed materials"
+  const fromType: RequestRecord["fromType"] = order.status === "pending" ? "buyer" : "seller"
+  const from = fromType === "buyer" ? order.buyerName : order.sellerName
 
   return {
     id: order.orderNumber,
     orderId: order.id,
     type: toType(order.total),
-    from: order.buyerName,
-    fromType: "buyer",
+    from,
+    fromType,
     product: leadProduct,
     quantity: `${totalQuantity} units`,
     location: order.deliveryAddress || `${order.buyerName} site`,
@@ -234,6 +236,7 @@ export default function RequestsPage() {
       vehicleNumber?: string
       driverName?: string
       driverPhone?: string
+      allowUnpaidDispatch?: boolean
     },
   ) => {
     setUpdatingId(orderId)
@@ -257,16 +260,55 @@ export default function RequestsPage() {
     }
   }
 
+  const buildPlanningUpdatePayload = (planning: PlanningDraft | undefined) => {
+    const nextPayload: {
+      estimatedDelivery?: string
+      distributorName?: string
+      vehicleType?: string
+      vehicleNumber?: string
+      driverName?: string
+      driverPhone?: string
+    } = {}
+
+    const estimatedDeliveryDate = planning?.estimatedDelivery?.trim()
+    if (estimatedDeliveryDate) {
+      const parsedDate = new Date(`${estimatedDeliveryDate}T09:00:00+05:30`)
+      if (!Number.isNaN(parsedDate.getTime())) {
+        nextPayload.estimatedDelivery = parsedDate.toISOString()
+      }
+    }
+
+    const distributorName = planning?.distributorName?.trim()
+    if (distributorName && distributorName.length >= 1) {
+      nextPayload.distributorName = distributorName
+    }
+
+    const vehicleType = planning?.vehicleType?.trim()
+    if (vehicleType && vehicleType.length >= 2) {
+      nextPayload.vehicleType = vehicleType
+    }
+
+    const vehicleNumber = planning?.vehicleNumber?.trim().toUpperCase()
+    if (vehicleNumber && vehicleNumber.length >= 4) {
+      nextPayload.vehicleNumber = vehicleNumber
+    }
+
+    const driverName = planning?.driverName?.trim()
+    if (driverName && driverName.length >= 2) {
+      nextPayload.driverName = driverName
+    }
+
+    const driverPhone = planning?.driverPhone?.trim()
+    if (driverPhone && driverPhone.length >= 7) {
+      nextPayload.driverPhone = driverPhone
+    }
+
+    return nextPayload
+  }
+
   const renderActionButtons = (request: RequestRecord) => {
     const disabled = updatingId === request.orderId
     const planning = planningByOrderId[request.orderId]
-    const hasPlanningReady =
-      Boolean(planning?.estimatedDelivery) &&
-      Boolean(planning?.distributorName?.trim()) &&
-      Boolean(planning?.vehicleType?.trim()) &&
-      Boolean(planning?.vehicleNumber?.trim()) &&
-      Boolean(planning?.driverName?.trim()) &&
-      Boolean(planning?.driverPhone?.trim())
 
     if (request.status === "pending") {
       return (
@@ -276,17 +318,10 @@ export default function RequestsPage() {
             onClick={() =>
               updateOrder(request.orderId, {
                 status: "confirmed",
-                estimatedDelivery: planning?.estimatedDelivery
-                  ? new Date(`${planning.estimatedDelivery}T09:00:00+05:30`).toISOString()
-                  : undefined,
-                distributorName: planning?.distributorName,
-                vehicleType: planning?.vehicleType,
-                vehicleNumber: planning?.vehicleNumber,
-                driverName: planning?.driverName,
-                driverPhone: planning?.driverPhone,
+                ...buildPlanningUpdatePayload(planning),
               })
             }
-            disabled={disabled || !hasPlanningReady}
+            disabled={disabled}
           >
             {disabled ? "Updating..." : "Accept"}
           </Button>
@@ -304,7 +339,11 @@ export default function RequestsPage() {
 
     if (request.status === "accepted") {
       return (
-        <Button size="sm" onClick={() => updateOrder(request.orderId, { status: "shipped" })} disabled={disabled}>
+        <Button
+          size="sm"
+          onClick={() => updateOrder(request.orderId, { status: "shipped", allowUnpaidDispatch: true })}
+          disabled={disabled}
+        >
           {disabled ? "Updating..." : "Start Dispatch"}
         </Button>
       )
