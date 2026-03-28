@@ -11,6 +11,10 @@ const createProductSchema = z.object({
   unit: z.string().min(1),
   stock: z.number().int().nonnegative(),
   minStock: z.number().int().nonnegative(),
+  minOrderQty: z.number().int().positive().optional(),
+  maxOrderQty: z.number().int().positive().optional(),
+  bulkOnly: z.boolean().optional(),
+  operatorRole: z.enum(["seller", "distributor"]).optional(),
   image: z.string().min(1).default("/placeholder.svg"),
 })
 
@@ -30,7 +34,7 @@ export async function GET(request: Request) {
   const limit = Math.min(500, Math.max(1, Number.parseInt(url.searchParams.get("limit") || String(defaultLimit), 10) || defaultLimit))
 
   const scopeSellerId =
-    sessionUser.role === "seller" && scope !== "all"
+    (sessionUser.role === "seller" || sessionUser.role === "distributor") && scope !== "all"
       ? sessionUser.userId
       : sessionUser.role === "admin" && userId
         ? userId
@@ -61,7 +65,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const sessionUser = await getSessionUser()
-  if (!sessionUser || (sessionUser.role !== "seller" && sessionUser.role !== "admin")) {
+  if (!sessionUser || (sessionUser.role !== "seller" && sessionUser.role !== "distributor" && sessionUser.role !== "admin")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -72,10 +76,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid product data" }, { status: 400 })
   }
 
+  const operatorRole =
+    sessionUser.role === "admin"
+      ? parsed.data.operatorRole === "distributor"
+        ? "distributor"
+        : "seller"
+      : sessionUser.role === "distributor"
+        ? "distributor"
+        : "seller"
+
+  const minOrderBaseline = operatorRole === "distributor" ? 50 : 1
+  const maxOrderBaseline = operatorRole === "distributor" ? 100000 : 5000
+  const bulkDefault = operatorRole === "distributor"
+  const bulkOnly = parsed.data.bulkOnly ?? bulkDefault
+  const minOrderQty = Math.max(1, parsed.data.minOrderQty ?? minOrderBaseline)
+  const maxOrderQty = Math.max(minOrderQty, parsed.data.maxOrderQty ?? maxOrderBaseline)
+
   const product = await createProduct({
     ...parsed.data,
     rating: 4.5,
     status: parsed.data.stock > 0 ? "active" : "out_of_stock",
+    minOrderQty,
+    maxOrderQty,
+    bulkOnly,
+    operatorRole,
     sellerId: sessionUser.userId,
     sellerName: sessionUser.name,
   })
