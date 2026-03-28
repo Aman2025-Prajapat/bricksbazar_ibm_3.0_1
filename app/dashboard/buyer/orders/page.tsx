@@ -193,6 +193,8 @@ export default function OrdersPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState("")
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
+  const [chatOrderId, setChatOrderId] = useState<string | null>(null)
+  const [chatOrderNumber, setChatOrderNumber] = useState("")
   const [trackingLoading, setTrackingLoading] = useState(false)
   const [trackingError, setTrackingError] = useState("")
   const [trackingMessage, setTrackingMessage] = useState("")
@@ -605,6 +607,17 @@ export default function OrdersPage() {
               <MessageCircle className="h-4 w-4 mr-2" />
               Contact Support
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setChatOrderId(order.id)
+                setChatOrderNumber(order.orderNumber)
+              }}
+            >
+              <MessageCircle className="h-4 w-4 mr-2" />
+              Supplier Chat
+            </Button>
             {order.status === "confirmed" && payment?.status !== "paid" ? (
               <Button size="sm" onClick={() => openPaymentForOrder(order)}>
                 <CreditCard className="h-4 w-4 mr-2" />
@@ -1000,7 +1013,25 @@ export default function OrdersPage() {
                 )}
               </div>
 
-              <OrderChatPanel orderId={selectedOrder.id} />
+              <div className="rounded-lg border p-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-medium text-sm">Supplier Live Chat</p>
+                  <p className="text-xs text-muted-foreground">
+                    Seller/distributor ke saath order updates ke liye live chat kholo.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setChatOrderId(selectedOrder.id)
+                    setChatOrderNumber(selectedOrder.orderNumber)
+                  }}
+                >
+                  <MessageCircle className="h-4 w-4 mr-2" />
+                  Open Chat
+                </Button>
+              </div>
 
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" onClick={() => contactSupport(selectedOrder)}>
@@ -1010,6 +1041,24 @@ export default function OrdersPage() {
               </div>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(chatOrderId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setChatOrderId(null)
+            setChatOrderNumber("")
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Supplier Chat {chatOrderNumber ? `- ${chatOrderNumber}` : ""}</DialogTitle>
+            <DialogDescription>Buyer, seller aur distributor ke beech live coordination chat.</DialogDescription>
+          </DialogHeader>
+          {chatOrderId ? <OrderChatPanel orderId={chatOrderId} /> : null}
         </DialogContent>
       </Dialog>
     </div>
