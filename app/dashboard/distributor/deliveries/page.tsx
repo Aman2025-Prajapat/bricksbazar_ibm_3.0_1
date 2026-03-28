@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { OrderChatPanel } from "@/components/chat/order-chat-panel"
 import { Search, MapPin, Clock, Package, Phone, MessageSquare, Navigation, Loader2, LocateFixed } from "lucide-react"
 
 type DeliveryStatus = "pickup_ready" | "in_transit" | "nearby" | "delivered" | "cancelled"
@@ -138,6 +140,8 @@ export default function DeliveriesPage() {
   const [locationDraftByDeliveryId, setLocationDraftByDeliveryId] = useState<Record<string, DeliveryLocationDraft>>({})
   const [savingAssignmentDeliveryId, setSavingAssignmentDeliveryId] = useState<string | null>(null)
   const [uploadingPodDeliveryId, setUploadingPodDeliveryId] = useState<string | null>(null)
+  const [chatOrderId, setChatOrderId] = useState<string | null>(null)
+  const [chatOrderNumber, setChatOrderNumber] = useState("")
 
   const loadDeliveries = async (silent = false) => {
     if (!silent) {
@@ -860,6 +864,18 @@ export default function DeliveriesPage() {
                       variant="outline"
                       size="sm"
                       className="gap-2 bg-transparent"
+                      onClick={() => {
+                        setChatOrderId(delivery.orderId)
+                        setChatOrderNumber(delivery.orderNumber)
+                      }}
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      Open Order Chat
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 bg-transparent"
                       disabled={delivery.status === "delivered" || delivery.status === "cancelled"}
                       onClick={() => pushLivePing(delivery)}
                     >
@@ -900,6 +916,24 @@ export default function DeliveriesPage() {
           ) : null}
         </div>
       )}
+
+      <Dialog
+        open={Boolean(chatOrderId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setChatOrderId(null)
+            setChatOrderNumber("")
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Order Chat {chatOrderNumber ? `- ${chatOrderNumber}` : ""}</DialogTitle>
+            <DialogDescription>Talk to buyer and linked supplier in real time for this order.</DialogDescription>
+          </DialogHeader>
+          {chatOrderId ? <OrderChatPanel orderId={chatOrderId} /> : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

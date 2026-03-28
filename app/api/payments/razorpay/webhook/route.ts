@@ -60,13 +60,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true })
   }
 
-  if (payload.event === "payment.captured" || status === "captured") {
+  const isCaptured = payload.event === "payment.captured" || status === "captured"
+  const isFailed = payload.event === "payment.failed" || status === "failed"
+  const isAlreadySuccessful = intent.status === "verified" || intent.status === "used"
+
+  if (isCaptured) {
+    if (isAlreadySuccessful) {
+      if (!intent.gatewayTransactionId || intent.gatewayTransactionId === paymentId) {
+        return NextResponse.json({ ok: true, idempotent: true })
+      }
+      return NextResponse.json({ ok: true, ignored: "transaction_mismatch" })
+    }
+
     await markPaymentIntentVerified({
       intentId: intent.id,
       gatewayTransactionId: paymentId,
       gatewayPayload: JSON.stringify(payload),
     })
-  } else if (payload.event === "payment.failed" || status === "failed") {
+  } else if (isFailed) {
+    if (intent.status === "failed") {
+      return NextResponse.json({ ok: true, idempotent: true })
+    }
+    if (isAlreadySuccessful) {
+      return NextResponse.json({ ok: true, ignored: "already_verified" })
+    }
+
     await markPaymentIntentFailed({
       intentId: intent.id,
       gatewayPayload: JSON.stringify(payload),

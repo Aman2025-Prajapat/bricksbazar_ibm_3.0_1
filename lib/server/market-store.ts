@@ -1314,6 +1314,7 @@ export async function listOrdersPaginated(input?: {
   status?: OrderStatus | "all"
   buyerId?: string
   sellerId?: string
+  distributorId?: string
   q?: string
 }) {
   await ensureMarketTables()
@@ -1332,6 +1333,12 @@ export async function listOrdersPaginated(input?: {
   if (input?.sellerId) {
     where.push("(seller_id = ? OR items_json LIKE ?)")
     params.push(input.sellerId, `%\"sellerId\":\"${input.sellerId}\"%`)
+  }
+  if (input?.distributorId) {
+    where.push(
+      "EXISTS (SELECT 1 FROM market_deliveries d WHERE d.order_id = market_orders.id AND d.distributor_id = ?)",
+    )
+    params.push(input.distributorId)
   }
   if (input?.q?.trim()) {
     const q = `%${escapeLikeQuery(input.q.trim().toLowerCase())}%`
@@ -1621,6 +1628,116 @@ export async function listPayments() {
      ORDER BY created_at DESC`,
   )
   return rows.map(mapPayment)
+}
+
+export async function getPaymentByOrderId(orderId: string) {
+  await ensureMarketTables()
+  const rows = await prisma.$queryRawUnsafe<PaymentRow[]>(
+    `SELECT id, order_id, user_id, amount, method, status, provider, payment_intent_id, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, created_at
+     FROM market_payments
+     WHERE order_id = ?
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    orderId,
+  )
+  return rows.length > 0 ? mapPayment(rows[0]) : null
+}
+
+export async function markOrderPaymentPaid(input: {
+  orderId: string
+  buyerId: string
+  paymentMethod: string
+  paymentProvider: PaymentProvider
+  paymentIntentId: string
+  gatewayOrderId?: string
+  gatewayTransactionId?: string
+  gatewaySignature?: string
+  gatewayPayload?: string
+  paymentVerifiedAt?: string
+}) {
+  await ensureMarketTables()
+
+  return prisma.$transaction(async (tx) => {
+    const orderRows = await tx.$queryRawUnsafe<OrderRow[]>(
+      "SELECT id, order_number, buyer_id, buyer_name, seller_id, seller_name, date, status, total, items_json, estimated_delivery, tracking_number FROM market_orders WHERE id = ? LIMIT 1",
+      input.orderId,
+    )
+    if (orderRows.length === 0) {
+      throw new Error("Order not found")
+    }
+
+    const order = mapOrder(orderRows[0])
+    if (order.buyerId !== input.buyerId) {
+      throw new Error("You can only pay your own orders")
+    }
+    if (order.status !== "confirmed") {
+      throw new Error("Order must be accepted by seller/distributor before payment")
+    }
+
+    const now = new Date().toISOString()
+    const paymentRows = await tx.$queryRawUnsafe<PaymentRow[]>(
+      `SELECT id, order_id, user_id, amount, method, status, provider, payment_intent_id, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, created_at
+       FROM market_payments
+       WHERE order_id = ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      input.orderId,
+    )
+
+    if (paymentRows.length > 0) {
+      const existing = paymentRows[0]
+      await tx.$executeRawUnsafe(
+        `UPDATE market_payments
+         SET amount = ?, method = ?, status = ?, provider = ?, payment_intent_id = ?, gateway_order_id = ?, gateway_transaction_id = ?, gateway_signature = ?, gateway_payload = ?, verified_at = ?
+         WHERE id = ?`,
+        order.total,
+        input.paymentMethod,
+        "paid",
+        input.paymentProvider,
+        input.paymentIntentId,
+        input.gatewayOrderId ?? null,
+        input.gatewayTransactionId ?? null,
+        input.gatewaySignature ?? null,
+        input.gatewayPayload ?? null,
+        input.paymentVerifiedAt ?? now,
+        existing.id,
+      )
+    } else {
+      await tx.$executeRawUnsafe(
+        `INSERT INTO market_payments
+         (id, order_id, user_id, amount, method, status, provider, payment_intent_id, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        crypto.randomUUID(),
+        order.id,
+        input.buyerId,
+        order.total,
+        input.paymentMethod,
+        "paid",
+        input.paymentProvider,
+        input.paymentIntentId,
+        input.gatewayOrderId ?? null,
+        input.gatewayTransactionId ?? null,
+        input.gatewaySignature ?? null,
+        input.gatewayPayload ?? null,
+        input.paymentVerifiedAt ?? now,
+        now,
+      )
+    }
+
+    const updatedPaymentRows = await tx.$queryRawUnsafe<PaymentRow[]>(
+      `SELECT id, order_id, user_id, amount, method, status, provider, payment_intent_id, gateway_order_id, gateway_transaction_id, gateway_signature, gateway_payload, verified_at, created_at
+       FROM market_payments
+       WHERE order_id = ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      input.orderId,
+    )
+
+    return {
+      order,
+      payment: updatedPaymentRows.length > 0 ? mapPayment(updatedPaymentRows[0]) : null,
+    }
+  })
 }
 
 export async function createPaymentIntent(input: {

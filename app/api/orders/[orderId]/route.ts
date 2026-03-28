@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getSessionUser } from "@/lib/server/auth-user"
 import {
+  getPaymentByOrderId,
   getDeliveryByOrderId,
   listOrders,
   type OrderStatus,
@@ -60,6 +61,16 @@ export async function PATCH(request: Request, { params }: { params: { orderId: s
       { error: `Invalid status transition from ${order.status} to ${nextStatus}` },
       { status: 400 },
     )
+  }
+
+  if (nextStatus === "shipped" || nextStatus === "delivered") {
+    const payment = await getPaymentByOrderId(order.id)
+    if (!payment || payment.status !== "paid") {
+      return NextResponse.json(
+        { error: "Buyer payment pending. Order can be shipped only after payment confirmation." },
+        { status: 409 },
+      )
+    }
   }
 
   const updated = await updateOrderStatus({ orderId: params.orderId, status: nextStatus })

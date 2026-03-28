@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Package, Truck, CheckCircle, Clock, Search, Eye, Download, MessageCircle, Loader2, RefreshCw, Navigation, Star } from "lucide-react"
+import { OrderChatPanel } from "@/components/chat/order-chat-panel"
+import { Package, Truck, CheckCircle, Clock, Search, Eye, Download, MessageCircle, Loader2, RefreshCw, Navigation, Star, CreditCard } from "lucide-react"
 
 type OrderStatus = "pending" | "confirmed" | "shipped" | "delivered" | "cancelled"
 type PaymentStatus = "pending" | "paid" | "failed"
@@ -416,6 +417,11 @@ export default function OrdersPage() {
     window.location.href = `mailto:support@bricksbazar.com?subject=${subject}&body=${body}`
   }
 
+  const openPaymentForOrder = (order: Order) => {
+    window.location.href = `/dashboard/buyer/payments`
+    setTrackingMessage(`Order ${order.orderNumber} approved hai. Ab payment complete karo.`)
+  }
+
   const openLiveTracking = () => {
     if (!selectedTracking) return
     const destination = selectedTracking.deliveryAddress
@@ -580,6 +586,12 @@ export default function OrdersPage() {
             </p>
           </div>
 
+          {order.status === "confirmed" && payment?.status !== "paid" ? (
+            <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+              Seller/Distributor ne request accept kar li hai. Ab payment complete karo, phir live tracking unlock hogi.
+            </div>
+          ) : null}
+
           <div className="flex gap-2 flex-wrap">
             <Button variant="outline" size="sm" onClick={() => setSelectedOrderId(order.id)}>
               <Eye className="h-4 w-4 mr-2" />
@@ -593,6 +605,12 @@ export default function OrdersPage() {
               <MessageCircle className="h-4 w-4 mr-2" />
               Contact Support
             </Button>
+            {order.status === "confirmed" && payment?.status !== "paid" ? (
+              <Button size="sm" onClick={() => openPaymentForOrder(order)}>
+                <CreditCard className="h-4 w-4 mr-2" />
+                Pay Now
+              </Button>
+            ) : null}
           </div>
         </CardContent>
       </Card>
@@ -748,6 +766,16 @@ export default function OrdersPage() {
                   </p>
                 </div>
               </div>
+
+              {selectedOrder.status === "confirmed" && selectedPayment?.status !== "paid" ? (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  <p>Request accepted. Payment pending hai, payment ke baad tracking live hogi.</p>
+                  <Button size="sm" onClick={() => openPaymentForOrder(selectedOrder)}>
+                    <CreditCard className="h-4 w-4 mr-2" />
+                    Pay Now
+                  </Button>
+                </div>
+              ) : null}
 
               {selectedOrder.status === "delivered" ? (
                 <div className="space-y-3 rounded-lg border p-3">
@@ -971,6 +999,8 @@ export default function OrdersPage() {
                   </div>
                 )}
               </div>
+
+              <OrderChatPanel orderId={selectedOrder.id} />
 
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" onClick={() => contactSupport(selectedOrder)}>

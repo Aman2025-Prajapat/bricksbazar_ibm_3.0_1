@@ -1,9 +1,7 @@
 ﻿import { NextResponse } from "next/server"
 import { z } from "zod"
 import {
-  consumePaymentIntent,
   createOrder,
-  getPaymentIntentById,
   listDeliveries,
   listOrderShipments,
   listOrderShipmentsByOrderIds,
@@ -22,7 +20,6 @@ const createOrderSchema = z.object({
     }),
   ),
   paymentMethod: z.string().min(2).default("UPI"),
-  paymentIntentId: z.string().uuid().optional(),
   deliveryAddress: z.string().min(12).max(300),
   requestedDeliveryDate: z.string().datetime().optional(),
   preferredDistributorId: z.string().min(2).max(120).optional(),
@@ -52,6 +49,7 @@ export async function GET(request: Request) {
     status,
     buyerId: sessionUser.role === "buyer" ? sessionUser.userId : undefined,
     sellerId: sessionUser.role === "seller" ? sessionUser.userId : undefined,
+    distributorId: sessionUser.role === "distributor" ? sessionUser.userId : undefined,
   })
 
   const orderIds = new Set(pageResult.items.map((order) => order.id))
@@ -133,34 +131,6 @@ export async function POST(request: Request) {
   }
 
   try {
-    const normalizedMethod = parsed.data.paymentMethod.toLowerCase()
-    const gatewayMethod = normalizedMethod.includes("razorpay") || normalizedMethod.includes("phonepe")
-
-    let consumedIntent: Awaited<ReturnType<typeof consumePaymentIntent>> | null = null
-
-    if (gatewayMethod) {
-      if (!parsed.data.paymentIntentId) {
-        return NextResponse.json({ error: "Payment verification is required before checkout" }, { status: 400 })
-      }
-
-      const intent = await getPaymentIntentById(parsed.data.paymentIntentId)
-      if (!intent || intent.buyerId !== sessionUser.userId) {
-        return NextResponse.json({ error: "Payment intent not found" }, { status: 404 })
-      }
-      if (intent.status !== "verified") {
-        return NextResponse.json({ error: "Payment is not verified yet" }, { status: 409 })
-      }
-
-      consumedIntent = await consumePaymentIntent({
-        intentId: intent.id,
-        buyerId: sessionUser.userId,
-      })
-
-      if (!consumedIntent) {
-        return NextResponse.json({ error: "Payment verification expired. Please retry payment." }, { status: 409 })
-      }
-    }
-
     const result = await createOrder({
       buyerId: sessionUser.userId,
       buyerName: sessionUser.name,
@@ -171,18 +141,20 @@ export async function POST(request: Request) {
       preferredDistributorName: parsed.data.preferredDistributorName,
       preferredVehicleType: parsed.data.preferredVehicleType,
       paymentMethod: parsed.data.paymentMethod,
-      paymentStatus: gatewayMethod ? "paid" : "pending",
-      paymentProvider: consumedIntent?.provider ?? "manual",
-      paymentIntentId: consumedIntent?.id,
-      gatewayOrderId: consumedIntent?.gatewayOrderId,
-      gatewayTransactionId: consumedIntent?.gatewayTransactionId,
-      gatewaySignature: consumedIntent?.gatewaySignature,
-      gatewayPayload: consumedIntent?.gatewayPayload,
-      paymentVerifiedAt: consumedIntent?.verifiedAt,
+      paymentStatus: "pending",
+      paymentProvider: "manual",
     })
 
     const shipments = await listOrderShipments({ orderId: result.order.id })
-    return NextResponse.json({ ...result, shipments }, { status: 201 })
+    return NextResponse.json(
+      {
+        ...result,
+        shipments,
+        message:
+          "Order request submitted. Seller/distributor approval pending. Complete payment after approval to start live tracking.",
+      },
+      { status: 201 },
+    )
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Could not create order" },

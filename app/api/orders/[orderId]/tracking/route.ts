@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/server/auth-user"
-import { getDeliveryAlerts, getDeliveryByOrderId, getDeliveryOtp, getDeliveryProof, listDeliveryLocations, listOrders } from "@/lib/server/market-store"
+import {
+  getDeliveryAlerts,
+  getDeliveryByOrderId,
+  getDeliveryOtp,
+  getDeliveryProof,
+  getPaymentByOrderId,
+  listDeliveryLocations,
+  listOrders,
+} from "@/lib/server/market-store"
 import { getUserVerificationMapByIds } from "@/lib/server/user-store"
 
 export async function GET(_request: Request, { params }: { params: { orderId: string } }) {
@@ -25,6 +33,7 @@ export async function GET(_request: Request, { params }: { params: { orderId: st
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
+  const payment = await getPaymentByOrderId(order.id)
   const delivery = await getDeliveryByOrderId(order.id)
   const verificationMap = await getUserVerificationMapByIds(
     [order.sellerId, delivery?.distributorId].filter((id): id is string => Boolean(id)),
@@ -33,6 +42,18 @@ export async function GET(_request: Request, { params }: { params: { orderId: st
     ...order,
     sellerVerified: verificationMap.get(order.sellerId) === true,
   }
+  if (sessionUser.role === "buyer" && order.buyerId === sessionUser.userId && (!payment || payment.status !== "paid")) {
+    return NextResponse.json({
+      order: enrichedOrder,
+      delivery: null,
+      locations: [],
+      otp: null,
+      proof: null,
+      alerts: [],
+      message: "Seller/distributor accepted your request. Complete payment to unlock live tracking.",
+    })
+  }
+
   if (!delivery) {
     return NextResponse.json({ order: enrichedOrder, delivery: null, locations: [], otp: null, proof: null, alerts: [] })
   }

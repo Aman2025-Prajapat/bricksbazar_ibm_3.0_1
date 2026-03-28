@@ -2,10 +2,13 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import {
+  consumePaymentIntent,
   createPaymentIntent,
   getPaymentIntentById,
+  getPaymentByOrderId,
   listOrders,
   listPayments,
+  markOrderPaymentPaid,
   markPaymentIntentFailed,
   markPaymentIntentVerified,
 } from "@/lib/server/market-store"
@@ -37,7 +40,14 @@ const verifyPhonePeSchema = z.object({
   merchantTransactionId: z.string().min(6),
 })
 
-const paymentCommandSchema = z.union([createIntentSchema, verifyRazorpaySchema, verifyPhonePeSchema])
+const settleOrderSchema = z.object({
+  action: z.literal("settle_order"),
+  orderId: z.string().min(1),
+  intentId: z.string().uuid(),
+  paymentMethod: z.string().min(2),
+})
+
+const paymentCommandSchema = z.union([createIntentSchema, verifyRazorpaySchema, verifyPhonePeSchema, settleOrderSchema])
 const isProduction = process.env.NODE_ENV === "production"
 
 class PaymentConfigError extends Error {}
@@ -402,6 +412,68 @@ export async function POST(request: Request) {
         amount: parsed.data.amount,
         amountPaise: phonePeOrder.amountPaise,
         currency: phonePeOrder.currency,
+      })
+    }
+
+    if (parsed.data.action === "settle_order") {
+      const settle = parsed.data
+      const [orderPayment, intent, orders] = await Promise.all([
+        getPaymentByOrderId(settle.orderId),
+        getPaymentIntentById(settle.intentId),
+        listOrders(),
+      ])
+
+      const order = orders.find((item) => item.id === settle.orderId)
+      if (!order || order.buyerId !== sessionUser.userId) {
+        return NextResponse.json({ error: "Order not found" }, { status: 404 })
+      }
+      if (order.status !== "confirmed") {
+        return NextResponse.json(
+          { error: "Payment is allowed only after seller/distributor approval." },
+          { status: 409 },
+        )
+      }
+      if (orderPayment?.status === "paid") {
+        return NextResponse.json({
+          ok: true,
+          message: "Payment already confirmed for this order",
+          orderId: order.id,
+          payment: orderPayment,
+        })
+      }
+      if (!intent || intent.buyerId !== sessionUser.userId) {
+        return NextResponse.json({ error: "Payment intent not found" }, { status: 404 })
+      }
+      if (intent.status !== "verified") {
+        return NextResponse.json({ error: "Payment intent must be verified before settlement" }, { status: 409 })
+      }
+
+      const consumed = await consumePaymentIntent({
+        intentId: intent.id,
+        buyerId: sessionUser.userId,
+      })
+      if (!consumed) {
+        return NextResponse.json({ error: "Verified payment intent expired. Please pay again." }, { status: 409 })
+      }
+
+      const settled = await markOrderPaymentPaid({
+        orderId: order.id,
+        buyerId: sessionUser.userId,
+        paymentMethod: settle.paymentMethod,
+        paymentProvider: consumed.provider,
+        paymentIntentId: consumed.id,
+        gatewayOrderId: consumed.gatewayOrderId,
+        gatewayTransactionId: consumed.gatewayTransactionId,
+        gatewaySignature: consumed.gatewaySignature,
+        gatewayPayload: consumed.gatewayPayload,
+        paymentVerifiedAt: consumed.verifiedAt,
+      })
+
+      return NextResponse.json({
+        ok: true,
+        message: "Payment confirmed. You can now track live delivery updates.",
+        order: settled.order,
+        payment: settled.payment,
       })
     }
 

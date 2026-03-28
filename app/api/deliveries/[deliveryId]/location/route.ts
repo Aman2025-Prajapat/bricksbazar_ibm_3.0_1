@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getSessionUser } from "@/lib/server/auth-user"
-import { appendDeliveryLocation, getDeliveryById, listDeliveryLocations } from "@/lib/server/market-store"
+import { appendDeliveryLocation, getDeliveryById, getPaymentByOrderId, listDeliveryLocations } from "@/lib/server/market-store"
 
 const createLocationSchema = z.object({
   lat: z.number().min(-90).max(90),
@@ -60,6 +60,14 @@ export async function POST(request: Request, { params }: { params: { deliveryId:
 
   if (delivery.status === "delivered" || delivery.status === "cancelled") {
     return NextResponse.json({ error: "Tracking is closed for this delivery" }, { status: 409 })
+  }
+
+  const payment = await getPaymentByOrderId(delivery.orderId)
+  if (!payment || payment.status !== "paid") {
+    return NextResponse.json(
+      { error: "Buyer payment pending. Live GPS updates will start after payment confirmation." },
+      { status: 409 },
+    )
   }
 
   if (delivery.vehicleNumber === "Not Assigned" || delivery.driverName === "Not Assigned") {

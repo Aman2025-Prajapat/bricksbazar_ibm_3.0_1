@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { OrderChatPanel } from "@/components/chat/order-chat-panel"
 import { Search, Truck, CheckCircle, Clock, AlertCircle, Eye, MessageSquare, Loader2, Navigation } from "lucide-react"
 
 type OrderStatus = "pending" | "confirmed" | "shipped" | "delivered" | "cancelled"
@@ -55,6 +57,8 @@ export default function SellerOrdersPage() {
   const [selectedStatus, setSelectedStatus] = useState("all")
   const [trackingOrderId, setTrackingOrderId] = useState<string | null>(null)
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null)
+  const [chatOrderId, setChatOrderId] = useState<string | null>(null)
+  const [chatOrderNumber, setChatOrderNumber] = useState("")
 
   const statuses = ["all", "pending", "confirmed", "shipped", "delivered", "cancelled"]
 
@@ -296,9 +300,17 @@ export default function SellerOrdersPage() {
                     <Eye className="h-4 w-4" />
                     View Details
                   </Button>
-                  <Button variant="outline" size="sm" className="gap-2 bg-transparent">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2 bg-transparent"
+                    onClick={() => {
+                      setChatOrderId(order.id)
+                      setChatOrderNumber(order.orderNumber)
+                    }}
+                  >
                     <MessageSquare className="h-4 w-4" />
-                    Contact Buyer
+                    Order Chat
                   </Button>
                   <Button
                     variant="outline"
@@ -332,6 +344,24 @@ export default function SellerOrdersPage() {
           ) : null}
         </div>
       )}
+
+      <Dialog
+        open={Boolean(chatOrderId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setChatOrderId(null)
+            setChatOrderNumber("")
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Order Chat {chatOrderNumber ? `- ${chatOrderNumber}` : ""}</DialogTitle>
+            <DialogDescription>Real-time conversation with buyer and assigned distributor.</DialogDescription>
+          </DialogHeader>
+          {chatOrderId ? <OrderChatPanel orderId={chatOrderId} /> : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

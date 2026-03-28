@@ -81,6 +81,7 @@ async function main() {
   const buyer = createSession("buyer")
   const distributor = createSession("distributor")
   const admin = createSession("admin")
+  let distributorUserId = ""
 
   const summary = {
     baseUrl,
@@ -152,6 +153,7 @@ async function main() {
       password,
     },
   })
+  distributorUserId = distributorLogin.data?.user?.id || ""
 
   if (!distributorLogin.ok && distributorLogin.status === 403 && adminEmail && adminPassword) {
     const adminLogin = await apiRequest(admin, "/api/auth/login", {
@@ -182,8 +184,16 @@ async function main() {
       json: { email: distributorEmail, password },
     })
     await assertOk("distributor login after approval", distributorLoginRetry)
+    distributorUserId = distributorLoginRetry.data?.user?.id || distributorUserId
   } else if (!distributorLogin.ok) {
     throw new Error(`distributor login failed (${distributorLogin.status}): ${JSON.stringify(distributorLogin.data)}`)
+  }
+
+  if (!distributorUserId) {
+    const distributorMe = await apiRequest(distributor, "/api/auth/me")
+    if (distributorMe.ok) {
+      distributorUserId = distributorMe.data?.user?.id || ""
+    }
   }
 
   const productsResult = await apiRequest(buyer, "/api/products")
@@ -194,37 +204,7 @@ async function main() {
     throw new Error("No active product available for E2E order")
   }
 
-  let paymentIntentId
-  let paymentMethod = "UPI"
-  const createIntent = await apiRequest(buyer, "/api/payments", {
-    method: "POST",
-    json: {
-      action: "create_intent",
-      provider: "razorpay",
-      amount: Math.max(200, Number(firstActive.price) * 2),
-      currency: "INR",
-    },
-  })
-
-  if (createIntent.ok && createIntent.data?.intentId && createIntent.data?.gatewayOrderId) {
-    const verifyIntent = await apiRequest(buyer, "/api/payments", {
-      method: "POST",
-      json: {
-        action: "verify_intent",
-        provider: "razorpay",
-        intentId: createIntent.data.intentId,
-        razorpayOrderId: createIntent.data.gatewayOrderId,
-        razorpayPaymentId: `pay_mock_${Date.now()}`,
-        razorpaySignature: `sig_mock_${Date.now()}`,
-      },
-    })
-
-    if (verifyIntent.ok && verifyIntent.data?.verified) {
-      paymentIntentId = verifyIntent.data.intentId
-      paymentMethod = "RAZORPAY-UPI"
-    }
-  }
-
+  const paymentMethod = "RAZORPAY-UPI"
   summary.paymentMode = paymentMethod
 
   const placeOrder = await apiRequest(buyer, "/api/orders", {
@@ -232,9 +212,9 @@ async function main() {
     json: {
       items: [{ productId: firstActive.id, quantity: 2 }],
       paymentMethod,
-      paymentIntentId,
       deliveryAddress: "H.No 42, Vijay Nagar, Indore, Madhya Pradesh, 452010",
       requestedDeliveryDate: toIso(30),
+      preferredDistributorId: distributorUserId || undefined,
       preferredDistributorName: "MP Logistics Dispatch",
       preferredVehicleType: "Truck",
     },
@@ -252,6 +232,7 @@ async function main() {
     json: {
       status: "confirmed",
       estimatedDelivery: toIso(18),
+      distributorId: distributorUserId || undefined,
       distributorName: "E2E Distributor Ops",
       vehicleType: "Truck",
       vehicleNumber: "MP09TR1001",
@@ -261,6 +242,51 @@ async function main() {
     },
   })
   await assertOk("order confirm", confirmOrder)
+
+  const trackingPaymentGate = await apiRequest(buyer, `/api/orders/${summary.orderId}/tracking`)
+  await assertOk("tracking payment gate", trackingPaymentGate)
+  assertCondition(
+    typeof trackingPaymentGate.data?.message === "string" &&
+      trackingPaymentGate.data.message.toLowerCase().includes("payment"),
+    "Expected buyer payment prompt after approval",
+  )
+
+  const payableAmount = Number(placeOrder.data?.order?.total || 0) || Math.max(200, Number(firstActive.price) * 2)
+  const createIntent = await apiRequest(buyer, "/api/payments", {
+    method: "POST",
+    json: {
+      action: "create_intent",
+      provider: "razorpay",
+      amount: payableAmount,
+      currency: "INR",
+    },
+  })
+  await assertOk("payment intent create", createIntent)
+
+  const verifyIntent = await apiRequest(buyer, "/api/payments", {
+    method: "POST",
+    json: {
+      action: "verify_intent",
+      provider: "razorpay",
+      intentId: createIntent.data.intentId,
+      razorpayOrderId: createIntent.data.gatewayOrderId,
+      razorpayPaymentId: `pay_mock_${Date.now()}`,
+      razorpaySignature: `sig_mock_${Date.now()}`,
+    },
+  })
+  await assertOk("payment intent verify", verifyIntent)
+  assertCondition(Boolean(verifyIntent.data?.intentId), "Verified payment intent missing")
+
+  const settlePayment = await apiRequest(buyer, "/api/payments", {
+    method: "POST",
+    json: {
+      action: "settle_order",
+      orderId: summary.orderId,
+      intentId: verifyIntent.data.intentId,
+      paymentMethod,
+    },
+  })
+  await assertOk("order payment settle", settlePayment)
 
   const shipOrder = await apiRequest(distributor, `/api/orders/${summary.orderId}`, {
     method: "PATCH",

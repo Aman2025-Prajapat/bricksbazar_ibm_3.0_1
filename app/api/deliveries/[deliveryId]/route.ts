@@ -5,6 +5,7 @@ import {
   getDeliveryAlerts,
   getDeliveryById,
   getDeliveryProof,
+  getPaymentByOrderId,
   listOrders,
   updateDelivery,
   upsertDeliveryProof,
@@ -139,6 +140,17 @@ export async function PATCH(request: Request, { params }: { params: { deliveryId
 
   if ((delivery.status === "delivered" || delivery.status === "cancelled") && hasLocationUpdate) {
     return NextResponse.json({ error: "Tracking is locked for completed/cancelled deliveries" }, { status: 409 })
+  }
+
+  const payment = await getPaymentByOrderId(delivery.orderId)
+  const paymentPending = !payment || payment.status !== "paid"
+  const liveStatusRequested =
+    parsed.data.status !== undefined && ["in_transit", "nearby", "delivered"].includes(parsed.data.status)
+  if (paymentPending && (liveStatusRequested || hasLocationUpdate)) {
+    return NextResponse.json(
+      { error: "Buyer payment pending. Dispatch and live tracking start only after payment confirmation." },
+      { status: 409 },
+    )
   }
 
   const targetStatus = parsed.data.status ?? delivery.status

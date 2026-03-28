@@ -11,7 +11,8 @@ const loginSchema = z.object({
 })
 
 const LOGIN_WINDOW_MS = 10 * 60 * 1000
-const MAX_ATTEMPTS_PER_WINDOW = 8
+const MAX_ATTEMPTS_PER_IP_WINDOW = 20
+const MAX_ATTEMPTS_PER_IDENTIFIER_WINDOW = 6
 const BLOCK_FOR_MS = 10 * 60 * 1000
 
 type LoginAttemptState = {
@@ -20,7 +21,8 @@ type LoginAttemptState = {
   blockedUntil: number
 }
 
-const loginAttempts = new Map<string, LoginAttemptState>()
+const ipLoginAttempts = new Map<string, LoginAttemptState>()
+const identifierLoginAttempts = new Map<string, LoginAttemptState>()
 
 function getClientIdentifier(request: Request) {
   const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
@@ -28,28 +30,48 @@ function getClientIdentifier(request: Request) {
   return forwardedFor || realIp || "unknown"
 }
 
-function isBlocked(clientId: string) {
-  const attempt = loginAttempts.get(clientId)
-  if (!attempt) return false
-  if (attempt.blockedUntil <= Date.now()) {
-    loginAttempts.delete(clientId)
-    return false
-  }
-  return true
+function getIdentifierKey(clientId: string, identifier: string) {
+  return `${clientId}::${identifier}`
 }
 
-function registerFailure(clientId: string) {
+function pruneAttempts(store: Map<string, LoginAttemptState>) {
   const now = Date.now()
-  const current = loginAttempts.get(clientId)
+  for (const [key, value] of store.entries()) {
+    const blockExpired = value.blockedUntil > 0 && value.blockedUntil <= now
+    const windowExpired = now - value.windowStartedAt > LOGIN_WINDOW_MS
+    if (blockExpired || windowExpired) {
+      store.delete(key)
+    }
+  }
+}
+
+function getBlockedMs(clientId: string, identifier?: string) {
+  pruneAttempts(ipLoginAttempts)
+  pruneAttempts(identifierLoginAttempts)
+
+  const now = Date.now()
+  const ipBlockedMs = Math.max(0, (ipLoginAttempts.get(clientId)?.blockedUntil || 0) - now)
+  if (!identifier) {
+    return ipBlockedMs
+  }
+
+  const identifierKey = getIdentifierKey(clientId, identifier)
+  const identifierBlockedMs = Math.max(0, (identifierLoginAttempts.get(identifierKey)?.blockedUntil || 0) - now)
+  return Math.max(ipBlockedMs, identifierBlockedMs)
+}
+
+function trackFailure(store: Map<string, LoginAttemptState>, key: string, maxAttempts: number) {
+  const now = Date.now()
+  const current = store.get(key)
 
   if (!current || now - current.windowStartedAt > LOGIN_WINDOW_MS) {
-    loginAttempts.set(clientId, { count: 1, windowStartedAt: now, blockedUntil: 0 })
+    store.set(key, { count: 1, windowStartedAt: now, blockedUntil: 0 })
     return
   }
 
   const nextCount = current.count + 1
-  if (nextCount >= MAX_ATTEMPTS_PER_WINDOW) {
-    loginAttempts.set(clientId, {
+  if (nextCount >= maxAttempts) {
+    store.set(key, {
       count: nextCount,
       windowStartedAt: current.windowStartedAt,
       blockedUntil: now + BLOCK_FOR_MS,
@@ -57,31 +79,56 @@ function registerFailure(clientId: string) {
     return
   }
 
-  loginAttempts.set(clientId, { ...current, count: nextCount })
+  store.set(key, { ...current, count: nextCount })
 }
 
-function clearFailures(clientId: string) {
-  loginAttempts.delete(clientId)
+function registerFailure(clientId: string, identifier: string) {
+  trackFailure(ipLoginAttempts, clientId, MAX_ATTEMPTS_PER_IP_WINDOW)
+  trackFailure(identifierLoginAttempts, getIdentifierKey(clientId, identifier), MAX_ATTEMPTS_PER_IDENTIFIER_WINDOW)
+}
+
+function clearFailures(clientId: string, identifier: string) {
+  identifierLoginAttempts.delete(getIdentifierKey(clientId, identifier))
+
+  const ipAttempt = ipLoginAttempts.get(clientId)
+  if (!ipAttempt) return
+  if (ipAttempt.blockedUntil > Date.now()) return
+
+  if (ipAttempt.count <= 1) {
+    ipLoginAttempts.delete(clientId)
+    return
+  }
+  ipLoginAttempts.set(clientId, { ...ipAttempt, count: ipAttempt.count - 1 })
+}
+
+function toRateLimitResponse(blockedMs: number) {
+  const retryAfterSeconds = Math.max(1, Math.ceil(blockedMs / 1000))
+  return NextResponse.json(
+    { error: "Too many login attempts. Try again in a few minutes." },
+    {
+      status: 429,
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Retry-After": `${retryAfterSeconds}`,
+      },
+    },
+  )
 }
 
 export async function POST(request: Request) {
   const clientId = getClientIdentifier(request)
 
-  if (isBlocked(clientId)) {
-    return NextResponse.json(
-      { error: "Too many login attempts. Try again in a few minutes." },
-      {
-        status: 429,
-        headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate",
-          "Retry-After": `${Math.ceil(BLOCK_FOR_MS / 1000)}`,
-        },
-      },
-    )
+  const ipBlockedMs = getBlockedMs(clientId)
+  if (ipBlockedMs > 0) {
+    return toRateLimitResponse(ipBlockedMs)
   }
 
   try {
-    const body = await request.json()
+    const body = await request.json().catch(() => null)
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Invalid login data" }, { status: 400 })
+    }
+
     const normalizedBody = {
       identifier: typeof body?.identifier === "string" ? body.identifier : body?.email,
       password: body?.password,
@@ -93,17 +140,22 @@ export async function POST(request: Request) {
     }
 
     const identifier = parsed.data.identifier.trim().toLowerCase()
+    const accountBlockedMs = getBlockedMs(clientId, identifier)
+    if (accountBlockedMs > 0) {
+      return toRateLimitResponse(accountBlockedMs)
+    }
+
     const password = parsed.data.password
     const user = await findUserByIdentifier(identifier)
 
     if (!user) {
-      registerFailure(clientId)
+      registerFailure(clientId, identifier)
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
     }
 
     const isValid = await bcrypt.compare(password, user.passwordHash)
     if (!isValid) {
-      registerFailure(clientId)
+      registerFailure(clientId, identifier)
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
     }
 
@@ -120,7 +172,7 @@ export async function POST(request: Request) {
     const isUnverifiedOperator =
       (effectiveUser.role === "seller" || effectiveUser.role === "distributor") && !effectiveUser.verified
 
-    clearFailures(clientId)
+    clearFailures(clientId, identifier)
 
     const token = await createSessionToken({
       userId: effectiveUser.id,
