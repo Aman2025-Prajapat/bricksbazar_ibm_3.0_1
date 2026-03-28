@@ -384,13 +384,38 @@ export default function PaymentsPage() {
             order_id: intentPayload.gatewayOrderId,
             name: "BricksBazar IBM",
             description: `Payment for ${selectedPayableOrder.orderNumber}`,
-            ...(isRazorpayTestMode
-              ? {
-                  method: {
-                    upi: false,
+            method: {
+              upi: true,
+              card: true,
+              netbanking: true,
+              wallet: true,
+            },
+            config: {
+              display: {
+                blocks: {
+                  upi: {
+                    name: "Pay by UPI",
+                    instruments: [{ method: "upi" }],
                   },
-                }
-              : {}),
+                  banks: {
+                    name: "Net Banking",
+                    instruments: [{ method: "netbanking" }],
+                  },
+                  cards: {
+                    name: "Card",
+                    instruments: [{ method: "card" }],
+                  },
+                  wallets: {
+                    name: "Wallet",
+                    instruments: [{ method: "wallet" }],
+                  },
+                },
+                sequence: ["block.upi", "block.banks", "block.cards", "block.wallets"],
+                preferences: {
+                  show_default_blocks: true,
+                },
+              },
+            },
             handler: async (response: unknown) => {
               try {
                 const parsedResponse = response as RazorpayHandlerResponse
