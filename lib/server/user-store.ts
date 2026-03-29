@@ -1,4 +1,5 @@
 import crypto from "node:crypto"
+import bcrypt from "bcryptjs"
 import type { UserRole } from "@/lib/auth"
 import { prisma } from "@/lib/server/prisma"
 
@@ -53,6 +54,16 @@ export type StoredVerificationRequest = {
 
 let userTableReady = false
 let verificationTableReady = false
+let defaultAdminReady = false
+
+function isStrongPassword(password: string) {
+  return (
+    password.length >= 10 &&
+    /[A-Za-z]/.test(password) &&
+    /[0-9]/.test(password) &&
+    /[^A-Za-z0-9]/.test(password)
+  )
+}
 
 async function ensureUserTable() {
   if (userTableReady) return
@@ -110,6 +121,42 @@ async function ensureVerificationTable() {
 async function ensureUserStoreTables() {
   await ensureUserTable()
   await ensureVerificationTable()
+  await ensureDefaultAdminAccount()
+}
+
+async function ensureDefaultAdminAccount() {
+  if (defaultAdminReady) return
+
+  const password = String(process.env.ADMIN_PASSWORD || "").trim()
+  if (!isStrongPassword(password)) {
+    // Skip bootstrapping when admin password is missing or weak.
+    return
+  }
+
+  const email = String(process.env.ADMIN_EMAIL || "admin@bricksbazar.com")
+    .trim()
+    .toLowerCase()
+  const name = String(process.env.ADMIN_NAME || "Admin").trim() || "Admin"
+  const passwordHash = await bcrypt.hash(password, 12)
+
+  await prisma.user.upsert({
+    where: { email },
+    update: {
+      name,
+      role: "admin",
+      passwordHash,
+      verified: true,
+    },
+    create: {
+      email,
+      name,
+      role: "admin",
+      passwordHash,
+      verified: true,
+    },
+  })
+
+  defaultAdminReady = true
 }
 
 function mapUser(user: {
