@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { OrderChatPanel } from "@/components/chat/order-chat-panel"
-import { Search, MapPin, Clock, Package, Phone, MessageSquare, Navigation, Loader2, LocateFixed } from "lucide-react"
+import { Search, MapPin, Clock, Package, Phone, MessageSquare, Navigation, Loader2, LocateFixed, KeyRound, Copy } from "lucide-react"
 
 type DeliveryStatus = "pickup_ready" | "in_transit" | "nearby" | "delivered" | "cancelled"
 type DeliveryAlertSeverity = "info" | "warning" | "critical"
@@ -70,6 +70,11 @@ type DeliveryLocationDraft = {
   speedKph: string
   heading: string
   address: string
+}
+
+type DriverTokenData = {
+  token: string
+  expiresAt: string
 }
 
 function cleanPhoneForTel(value: string) {
@@ -139,6 +144,9 @@ export default function DeliveriesPage() {
   const [assignmentByDeliveryId, setAssignmentByDeliveryId] = useState<Record<string, DeliveryAssignmentDraft>>({})
   const [locationDraftByDeliveryId, setLocationDraftByDeliveryId] = useState<Record<string, DeliveryLocationDraft>>({})
   const [savingAssignmentDeliveryId, setSavingAssignmentDeliveryId] = useState<string | null>(null)
+  const [generatingDriverTokenDeliveryId, setGeneratingDriverTokenDeliveryId] = useState<string | null>(null)
+  const [copiedDriverTokenDeliveryId, setCopiedDriverTokenDeliveryId] = useState<string | null>(null)
+  const [driverTokenByDeliveryId, setDriverTokenByDeliveryId] = useState<Record<string, DriverTokenData>>({})
   const [uploadingPodDeliveryId, setUploadingPodDeliveryId] = useState<string | null>(null)
   const [chatOrderId, setChatOrderId] = useState<string | null>(null)
   const [chatOrderNumber, setChatOrderNumber] = useState("")
@@ -440,6 +448,52 @@ export default function DeliveriesPage() {
     }
   }
 
+  const generateDriverToken = async (delivery: DeliveryRecord) => {
+    setGeneratingDriverTokenDeliveryId(delivery.id)
+    setActionMessage("")
+    setError("")
+    try {
+      const response = await fetch(`/api/deliveries/${delivery.id}/driver-token`, {
+        credentials: "include",
+        cache: "no-store",
+      })
+      const payload = (await response.json()) as { token?: string; expiresAt?: string; error?: string }
+      if (!response.ok || !payload.token || !payload.expiresAt) {
+        throw new Error(payload.error || "Could not generate driver tracking token")
+      }
+
+      setDriverTokenByDeliveryId((current) => ({
+        ...current,
+        [delivery.id]: { token: payload.token!, expiresAt: payload.expiresAt! },
+      }))
+      setCopiedDriverTokenDeliveryId(null)
+      setActionMessage(`Driver token generated for ${delivery.orderNumber}.`)
+    } catch (tokenError) {
+      setError(tokenError instanceof Error ? tokenError.message : "Could not generate driver tracking token")
+    } finally {
+      setGeneratingDriverTokenDeliveryId(null)
+    }
+  }
+
+  const copyDriverToken = async (delivery: DeliveryRecord) => {
+    const driverToken = driverTokenByDeliveryId[delivery.id]?.token
+    if (!driverToken) {
+      setError("Generate driver token first")
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(driverToken)
+      setCopiedDriverTokenDeliveryId(delivery.id)
+      setActionMessage(`Driver token copied for ${delivery.orderNumber}.`)
+      window.setTimeout(() => {
+        setCopiedDriverTokenDeliveryId((current) => (current === delivery.id ? null : current))
+      }, 1200)
+    } catch {
+      setError("Could not copy driver token. Please copy manually.")
+    }
+  }
+
   const pushLivePing = async (delivery: DeliveryRecord) => {
     const draft = locationDraftByDeliveryId[delivery.id] || defaultLocationDraft(delivery)
     const lat = Number.parseFloat(draft.lat)
@@ -610,6 +664,9 @@ export default function DeliveriesPage() {
             const isUpdating = updatingDeliveryId === delivery.id
             const isIssuingOtp = issuingOtpDeliveryId === delivery.id
             const isSavingAssignment = savingAssignmentDeliveryId === delivery.id
+            const isGeneratingDriverToken = generatingDriverTokenDeliveryId === delivery.id
+            const hasDeliveryEnded = delivery.status === "delivered" || delivery.status === "cancelled"
+            const driverTokenState = driverTokenByDeliveryId[delivery.id]
             const alerts = alertsByDeliveryId[delivery.id] || []
             const assignmentDraft = assignmentByDeliveryId[delivery.id] || defaultAssignmentFromDelivery(delivery)
             const assignmentReady = isAssignmentReady(assignmentDraft)
@@ -682,17 +739,31 @@ export default function DeliveriesPage() {
                   <div className="mb-4 border rounded-lg p-3 space-y-3">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-medium">Order Assignment</p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="bg-transparent"
-                        disabled={isSavingAssignment || delivery.status === "delivered" || delivery.status === "cancelled"}
-                        onClick={() => {
-                          void saveAssignment(delivery)
-                        }}
-                      >
-                        {isSavingAssignment ? "Saving..." : "Save Assignment"}
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2 bg-transparent"
+                          disabled={isGeneratingDriverToken || !assignmentReady || hasDeliveryEnded}
+                          onClick={() => {
+                            void generateDriverToken(delivery)
+                          }}
+                        >
+                          <KeyRound className="h-4 w-4" />
+                          {isGeneratingDriverToken ? "Generating..." : "Generate Driver Token"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="bg-transparent"
+                          disabled={isSavingAssignment || hasDeliveryEnded}
+                          onClick={() => {
+                            void saveAssignment(delivery)
+                          }}
+                        >
+                          {isSavingAssignment ? "Saving..." : "Save Assignment"}
+                        </Button>
+                      </div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <Input
@@ -720,6 +791,28 @@ export default function DeliveriesPage() {
                       <p className="text-xs text-muted-foreground">
                         Assign vehicle number, driver name, and phone before starting transit.
                       </p>
+                    ) : null}
+                    {driverTokenState ? (
+                      <div className="rounded-md border bg-muted/30 p-2 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs text-muted-foreground">
+                            Token valid till {new Date(driverTokenState.expiresAt).toLocaleString()}
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-1 bg-transparent px-2 text-xs"
+                            onClick={() => {
+                              void copyDriverToken(delivery)
+                            }}
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                            {copiedDriverTokenDeliveryId === delivery.id ? "Copied" : "Copy"}
+                          </Button>
+                        </div>
+                        <code className="block text-xs break-all rounded border bg-background px-2 py-1">{driverTokenState.token}</code>
+                        <p className="text-[11px] text-muted-foreground">Use as `x-driver-tracking-token` header in driver app.</p>
+                      </div>
                     ) : null}
                   </div>
 
