@@ -56,6 +56,11 @@ let userTableReady = false
 let verificationTableReady = false
 let defaultAdminReady = false
 
+function isTrue(value: string | undefined) {
+  const normalized = (value || "").trim().toLowerCase()
+  return normalized === "1" || normalized === "true" || normalized === "yes"
+}
+
 function isStrongPassword(password: string) {
   return (
     password.length >= 10 &&
@@ -127,15 +132,19 @@ async function ensureUserStoreTables() {
 async function ensureDefaultAdminAccount() {
   if (defaultAdminReady) return
 
-  const password = String(process.env.ADMIN_PASSWORD || "").trim()
-  if (!isStrongPassword(password)) {
-    // Skip bootstrapping when admin password is missing or weak.
+  // Auto-seeding admin at runtime is disabled by default for safety.
+  // Enable explicitly only in controlled environments.
+  if (!isTrue(process.env.AUTO_SEED_ADMIN_ON_BOOT)) {
     return
   }
 
-  const email = String(process.env.ADMIN_EMAIL || "admin@bricksbazar.com")
-    .trim()
-    .toLowerCase()
+  const email = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase()
+  const password = String(process.env.ADMIN_PASSWORD || "").trim()
+  if (!email || !email.includes("@") || !isStrongPassword(password)) {
+    // Skip bootstrapping when admin email/password is missing or weak.
+    return
+  }
+
   const name = String(process.env.ADMIN_NAME || "Admin").trim() || "Admin"
   const passwordHash = await bcrypt.hash(password, 12)
 

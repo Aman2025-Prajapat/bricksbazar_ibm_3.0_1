@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { MapPin, TrendingUp, Truck, Calculator, AlertTriangle } from "lucide-react"
+import { downloadPdfDocument } from "@/lib/pdf-export"
 
 const locationData = {
   mumbai: {
@@ -133,35 +134,29 @@ export default function EnhancedLocationCosting() {
       createdAt: new Date().toISOString(),
     }
 
-    const quoteText = [
-      "BricksBazar Location Quote",
-      "--------------------------",
-      `Location: ${quote.location}`,
-      `Zone: ${quote.zone}`,
-      `Material: ${quote.material}`,
-      `Quantity: ${quote.quantity.toLocaleString()} (${quote.unit})`,
-      `Delivery Urgency: ${quote.urgency}`,
-      "",
-      "Cost Breakdown:",
-      `- Base Cost: Rs. ${Math.round(quote.costs.basePrice).toLocaleString()}`,
-      `- Location Adjusted: Rs. ${Math.round(quote.costs.locationAdjustedPrice).toLocaleString()}`,
-      `- Transport: Rs. ${Math.round(quote.costs.transportCost).toLocaleString()}`,
-      `- Labor: Rs. ${Math.round(quote.costs.laborCost).toLocaleString()}`,
-      `- Permits: Rs. ${Math.round(quote.costs.permitCost).toLocaleString()}`,
-      `- Total: Rs. ${Math.round(quote.costs.totalCost).toLocaleString()}`,
-      "",
-      `Generated At: ${new Date(quote.createdAt).toLocaleString()}`,
-    ].join("\n")
-
-    const blob = new Blob([quoteText], { type: "text/plain;charset=utf-8" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `location-quote-${locationInfo.name.toLowerCase()}-${selectedMaterial
-      .toLowerCase()
-      .replace(/\s+/g, "-")}.txt`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadPdfDocument({
+      filename: `location-quote-${locationInfo.name.toLowerCase()}-${selectedMaterial.toLowerCase().replace(/\s+/g, "-")}.pdf`,
+      title: "BricksBazar Location Quote",
+      subtitle: `${quote.location} | ${quote.material}`,
+      meta: [
+        `Zone: ${quote.zone}`,
+        `Quantity: ${quote.quantity.toLocaleString()} (${quote.unit})`,
+        `Delivery Urgency: ${quote.urgency}`,
+      ],
+      sections: [
+        {
+          heading: "Cost Breakdown",
+          lines: [
+            `Base Cost: Rs. ${Math.round(quote.costs.basePrice).toLocaleString()}`,
+            `Location Adjusted: Rs. ${Math.round(quote.costs.locationAdjustedPrice).toLocaleString()}`,
+            `Transport: Rs. ${Math.round(quote.costs.transportCost).toLocaleString()}`,
+            `Labor: Rs. ${Math.round(quote.costs.laborCost).toLocaleString()}`,
+            `Permits: Rs. ${Math.round(quote.costs.permitCost).toLocaleString()}`,
+            `Total: Rs. ${Math.round(quote.costs.totalCost).toLocaleString()}`,
+          ],
+        },
+      ],
+    })
 
     try {
       const raw = window.localStorage.getItem("bb_location_quotes_v1")
@@ -171,7 +166,7 @@ export default function EnhancedLocationCosting() {
       // Ignore local storage failures.
     }
 
-    setActionMessage("Detailed quote generated and downloaded successfully.")
+    setActionMessage("Detailed quote PDF generated and downloaded successfully.")
   }
 
   const compareWithOtherLocations = () => {

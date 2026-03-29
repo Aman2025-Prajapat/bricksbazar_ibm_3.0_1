@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Truck, TrendingUp, Clock, Download, MapPin, Search, RefreshCw, Loader2 } from "lucide-react"
+import { downloadPdfDocument } from "@/lib/pdf-export"
 
 type ApiPayment = {
   id: string
@@ -157,31 +158,60 @@ export default function DistributorPaymentsPage() {
     }
   }, [filteredEarnings, orders])
 
-  const exportCsv = () => {
-    const header = ["paymentId", "orderNumber", "route", "customer", "grossOrderAmount", "deliveryFee", "status", "date", "method"]
-    const rows = filteredEarnings.map((entry) => [
-      entry.id,
-      entry.orderNumber,
-      entry.route,
-      entry.customer,
-      entry.grossAmount.toFixed(2),
-      entry.amount.toFixed(2),
-      entry.status,
-      entry.date,
-      entry.method,
-    ])
+  const exportPdf = () => {
+    const summaryLines = [
+      `Total Earnings: Rs. ${stats.totalEarnings.toLocaleString()}`,
+      `Pending Earnings: Rs. ${stats.pendingEarnings.toLocaleString()}`,
+      `Active Deliveries: ${stats.activeDeliveries}`,
+      `Transactions: ${stats.totalTransactions}`,
+    ]
 
-    const csv = [header, ...rows]
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n")
+    const paymentLines =
+      filteredEarnings.length > 0
+        ? filteredEarnings.map(
+            (entry, index) =>
+              `${index + 1}. ${entry.orderNumber} | ${entry.route} | Customer: ${entry.customer} | Gross: Rs. ${entry.grossAmount.toLocaleString()} | Fee: Rs. ${entry.amount.toLocaleString()} | ${entry.status} | ${entry.date} | ${entry.method}`,
+          )
+        : ["No payment records available."]
 
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `distributor-payments-${new Date().toISOString().slice(0, 10)}.csv`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadPdfDocument({
+      filename: `distributor-payments-${new Date().toISOString().slice(0, 10)}.pdf`,
+      title: "BricksBazar Distributor Payments Report",
+      subtitle: "Delivery earnings export",
+      meta: [`Search Filter: ${query || "none"}`],
+      sections: [
+        { heading: "Summary", lines: summaryLines },
+        { heading: "Earnings History", lines: paymentLines },
+      ],
+    })
+  }
+
+  const downloadReceipt = (delivery: DeliveryPayment) => {
+    downloadPdfDocument({
+      filename: `${delivery.orderNumber}-delivery-receipt.pdf`,
+      title: "BricksBazar Distributor Delivery Receipt",
+      subtitle: `Order ${delivery.orderNumber}`,
+      sections: [
+        {
+          heading: "Delivery Details",
+          lines: [
+            `Customer: ${delivery.customer}`,
+            `Route: ${delivery.route}`,
+            `Distance: ${delivery.distance}`,
+            `Date: ${delivery.date}`,
+            `Method: ${delivery.method}`,
+            `Status: ${delivery.status}`,
+          ],
+        },
+        {
+          heading: "Payment Breakdown",
+          lines: [
+            `Order Gross Amount: Rs. ${delivery.grossAmount.toLocaleString()}`,
+            `Delivery Earnings: Rs. ${delivery.amount.toLocaleString()}`,
+          ],
+        },
+      ],
+    })
   }
 
   return (
@@ -196,9 +226,9 @@ export default function DistributorPaymentsPage() {
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
           </Button>
-          <Button variant="outline" onClick={exportCsv} disabled={filteredEarnings.length === 0} className="bg-transparent">
+          <Button variant="outline" onClick={exportPdf} disabled={filteredEarnings.length === 0} className="bg-transparent">
             <Download className="h-4 w-4 mr-2" />
-            Export
+            Export PDF
           </Button>
         </div>
       </div>
@@ -302,9 +332,9 @@ export default function DistributorPaymentsPage() {
                       </Badge>
                     </div>
                     {delivery.status === "completed" && (
-                      <Button size="sm" variant="outline" className="bg-transparent">
+                      <Button size="sm" variant="outline" className="bg-transparent" onClick={() => downloadReceipt(delivery)}>
                         <Download className="h-4 w-4 mr-2" />
-                        Receipt
+                        Receipt PDF
                       </Button>
                     )}
                   </div>

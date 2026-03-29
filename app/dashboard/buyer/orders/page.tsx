@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { OrderChatPanel } from "@/components/chat/order-chat-panel"
 import { Package, Truck, CheckCircle, Clock, Search, Eye, Download, MessageCircle, Loader2, RefreshCw, Navigation, Star, CreditCard } from "lucide-react"
+import { downloadPdfDocument } from "@/lib/pdf-export"
 
 type OrderStatus = "pending" | "confirmed" | "shipped" | "delivered" | "cancelled"
 type PaymentStatus = "pending" | "paid" | "failed"
@@ -42,6 +43,11 @@ interface Order {
   distributorVerified?: boolean
   deliveryStatus?: "pickup_ready" | "in_transit" | "nearby" | "delivered" | "cancelled"
   vehicleType?: string
+  vehicleNumber?: string
+  driverName?: string
+  driverPhone?: string
+  etaMinutes?: number
+  deliveryUpdatedAt?: string
   supplierRating?: {
     supplierId: string
     supplierName: string
@@ -115,52 +121,6 @@ type DeliveryAlert = {
   severity: DeliveryAlertSeverity
   title: string
   message: string
-}
-
-function toPdfSafeAscii(input: string) {
-  return input
-    .replace(/[^\x20-\x7E]/g, "?")
-    .replace(/\\/g, "\\\\")
-    .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)")
-}
-
-function buildSimplePdf(lines: string[]) {
-  const clippedLines = lines.slice(0, 120).map(toPdfSafeAscii)
-  const streamOps = ["BT", "/F1 11 Tf", "14 TL", "50 790 Td"]
-  clippedLines.forEach((line, index) => {
-    if (index > 0) {
-      streamOps.push("T*")
-    }
-    streamOps.push(`(${line}) Tj`)
-  })
-  streamOps.push("ET")
-  const stream = `${streamOps.join("\n")}\n`
-  const streamLength = stream.length
-
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
-    `<< /Length ${streamLength} >>\nstream\n${stream}endstream`,
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-  ]
-
-  let pdf = "%PDF-1.4\n"
-  const offsets: number[] = [0]
-  objects.forEach((object, index) => {
-    offsets.push(pdf.length)
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`
-  })
-
-  const xrefOffset = pdf.length
-  pdf += `xref\n0 ${objects.length + 1}\n`
-  pdf += "0000000000 65535 f \n"
-  offsets.slice(1).forEach((offset) => {
-    pdf += `${offset.toString().padStart(10, "0")} 00000 n \n`
-  })
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`
-  return new TextEncoder().encode(pdf)
 }
 
 function buildDeliveryTimeline(order: Order, trackingStatus?: DeliveryTracking["status"]) {
@@ -386,29 +346,30 @@ export default function OrdersPage() {
 
   const downloadInvoice = (order: Order) => {
     const payment = paymentByOrder.get(order.id)
-    const lines = [
-      "BricksBazar Invoice",
-      `Order: ${order.orderNumber}`,
-      `Date: ${new Date(order.date).toLocaleString()}`,
-      `Seller: ${order.sellerName}`,
-      `Status: ${order.status}`,
-      `Payment: ${payment?.status || "not available"} (${payment?.method || "N/A"})`,
-      "----------------------------------------",
-      "Items",
-      ...order.items.map(
-        (item) =>
-          `${item.productName} | Qty ${item.quantity} | Unit Rs ${item.unitPrice.toLocaleString()} | Total Rs ${item.lineTotal.toLocaleString()}`,
-      ),
-      "----------------------------------------",
-      `Grand Total: Rs. ${order.total.toLocaleString()}`,
-    ]
-    const blob = new Blob([buildSimplePdf(lines)], { type: "application/pdf" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `${order.orderNumber}-invoice.pdf`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadPdfDocument({
+      filename: `${order.orderNumber}-invoice.pdf`,
+      title: "BricksBazar Invoice",
+      subtitle: `Order ${order.orderNumber}`,
+      meta: [
+        `Date: ${new Date(order.date).toLocaleString()}`,
+        `Seller: ${order.sellerName}`,
+        `Order Status: ${order.status}`,
+        `Payment: ${payment?.status || "not available"} (${payment?.method || "N/A"})`,
+      ],
+      sections: [
+        {
+          heading: "Items",
+          lines: order.items.map(
+            (item) =>
+              `${item.productName} | Qty ${item.quantity} | Unit Rs ${item.unitPrice.toLocaleString()} | Total Rs ${item.lineTotal.toLocaleString()}`,
+          ),
+        },
+        {
+          heading: "Totals",
+          lines: [`Grand Total: Rs. ${order.total.toLocaleString()}`],
+        },
+      ],
+    })
   }
 
   const contactSupport = (order: Order) => {
@@ -739,11 +700,25 @@ export default function OrdersPage() {
                 </div>
                 <div className="p-3 border rounded-lg">
                   <p className="text-muted-foreground mb-1">Distributor</p>
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium">
-                      {selectedOrder.distributorName || "Not assigned"} | {selectedOrder.vehicleType || "Vehicle pending"}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium">
+                        {selectedOrder.distributorName || "Not assigned"} | {selectedOrder.vehicleType || "Vehicle pending"}
+                      </p>
+                      {renderVerifiedBadge(selectedOrder.distributorVerified, "Verified Distributor")}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Vehicle: {selectedOrder.vehicleNumber || "Not assigned"} | Driver: {selectedOrder.driverName || "Not assigned"}
                     </p>
-                    {renderVerifiedBadge(selectedOrder.distributorVerified, "Verified Distributor")}
+                    <p className="text-xs text-muted-foreground">
+                      Contact: {selectedOrder.driverPhone || "Pending"} | ETA:{" "}
+                      {selectedOrder.etaMinutes && selectedOrder.etaMinutes > 0 ? `${selectedOrder.etaMinutes} mins` : "Pending"}
+                    </p>
+                    {selectedOrder.deliveryUpdatedAt ? (
+                      <p className="text-xs text-muted-foreground">
+                        Last planning update: {new Date(selectedOrder.deliveryUpdatedAt).toLocaleString()}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               </div>

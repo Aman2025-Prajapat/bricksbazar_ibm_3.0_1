@@ -1,6 +1,9 @@
 import { PrismaClient } from "@prisma/client"
+import { getDatabaseUrl, validateProductionNetworkUrls } from "@/lib/server/env"
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient }
+const databaseUrl = getDatabaseUrl()
+validateProductionNetworkUrls()
 
 function isPostgresUrl(url: string | undefined) {
   if (!url) return false
@@ -62,7 +65,7 @@ function convertQuestionPlaceholders(query: string) {
 }
 
 function patchPrismaForPostgres(client: PrismaClient) {
-  if (!isPostgresUrl(process.env.DATABASE_URL)) return client
+  if (!isPostgresUrl(databaseUrl)) return client
 
   const originalQueryRawUnsafe = client.$queryRawUnsafe.bind(client)
   const originalExecuteRawUnsafe = client.$executeRawUnsafe.bind(client)
@@ -84,6 +87,11 @@ export const prisma =
   globalForPrisma.prisma ??
   patchPrismaForPostgres(
     new PrismaClient({
+      datasources: {
+        db: {
+          url: databaseUrl,
+        },
+      },
       log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
     }),
   )

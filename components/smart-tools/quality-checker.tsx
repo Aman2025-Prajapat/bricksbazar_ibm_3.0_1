@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Shield, CheckCircle, Star, Camera } from "lucide-react"
+import { downloadPdfDocument } from "@/lib/pdf-export"
 
 const qualityReports = [
   {
@@ -54,30 +55,28 @@ export default function QualityChecker() {
   }
 
   const requestQualityCertificate = () => {
-    const certificateContent = [
-      "BricksBazar Quality Certificate",
-      "--------------------------------",
-      `Product: ${report.product}`,
-      `Supplier: ${report.supplier}`,
-      `Overall Score: ${report.overallScore}/100`,
-      `Batch Number: ${report.batchNumber}`,
-      `Test Date: ${new Date(report.lastTested).toLocaleDateString()}`,
-      "",
-      "Test Results:",
-      ...report.tests.map((test) => `- ${test.name}: ${test.score}/100 (${test.status})`),
-      "",
-      `Generated On: ${new Date().toLocaleString()}`,
-    ].join("\n")
+    downloadPdfDocument({
+      filename: `${report.product.replace(/\s+/g, "-").toLowerCase()}-quality-certificate.pdf`,
+      title: "BricksBazar Quality Certificate",
+      subtitle: `${report.product} | ${report.supplier}`,
+      meta: [
+        `Overall Score: ${report.overallScore}/100`,
+        `Batch Number: ${report.batchNumber}`,
+        `Test Date: ${new Date(report.lastTested).toLocaleDateString()}`,
+      ],
+      sections: [
+        {
+          heading: "Test Results",
+          lines: report.tests.map((test) => `${test.name}: ${test.score}/100 (${test.status}) | Unit: ${test.unit}`),
+        },
+        {
+          heading: "Certifications",
+          lines: report.certifications,
+        },
+      ],
+    })
 
-    const blob = new Blob([certificateContent], { type: "text/plain;charset=utf-8" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `${report.product.replace(/\s+/g, "-").toLowerCase()}-quality-certificate.txt`
-    link.click()
-    URL.revokeObjectURL(url)
-
-    setActionMessage("Quality certificate generated and downloaded.")
+    setActionMessage("Quality certificate PDF generated and downloaded.")
   }
 
   const scheduleQualityInspection = () => {

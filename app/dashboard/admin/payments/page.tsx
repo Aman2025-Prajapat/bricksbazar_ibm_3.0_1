@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CreditCard, TrendingUp, Users, AlertTriangle, Search, Download, Loader2, Clock } from "lucide-react"
+import { downloadPdfDocument } from "@/lib/pdf-export"
 
 type ApiPayment = {
   id: string
@@ -145,32 +146,33 @@ export default function AdminPaymentsPage() {
     }
   }, [payments, users])
 
-  const downloadCsv = () => {
-    const header = ["paymentId", "orderNumber", "orderId", "buyerName", "sellerName", "userId", "amount", "method", "status", "createdAt"]
-    const rows = filteredPayments.map((payment) => [
-      payment.id,
-      payment.orderNumber,
-      payment.orderId,
-      payment.buyerName,
-      payment.sellerName,
-      payment.userId,
-      payment.amount.toFixed(2),
-      payment.method,
-      payment.status,
-      payment.createdAt,
-    ])
+  const downloadPdf = () => {
+    const summaryLines = [
+      `Total Collected: Rs. ${stats.totalCollected.toLocaleString()}`,
+      `Pending Value: Rs. ${stats.pendingValue.toLocaleString()}`,
+      `Failed Transactions: ${stats.failedCount}`,
+      `Verified Users: ${stats.verifiedUsers}`,
+      `Filtered Records: ${filteredPayments.length}`,
+    ]
 
-    const csv = [header, ...rows]
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n")
+    const transactionLines =
+      filteredPayments.length > 0
+        ? filteredPayments.map(
+            (payment, index) =>
+              `${index + 1}. ${payment.orderNumber} | Buyer: ${payment.buyerName} | Seller: ${payment.sellerName} | Rs. ${payment.amount.toLocaleString()} | ${payment.method} | ${payment.status} | ${new Date(payment.createdAt).toLocaleString()}`,
+          )
+        : ["No transactions available for current filters."]
 
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `admin-payments-${new Date().toISOString().slice(0, 10)}.csv`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadPdfDocument({
+      filename: `admin-payments-${new Date().toISOString().slice(0, 10)}.pdf`,
+      title: "BricksBazar Admin Payments Report",
+      subtitle: "Platform transaction export",
+      meta: [`Status Filter: ${statusFilter}`, `Search: ${searchTerm || "none"}`],
+      sections: [
+        { heading: "Summary", lines: summaryLines },
+        { heading: "Transactions", lines: transactionLines },
+      ],
+    })
   }
 
   return (
@@ -253,9 +255,9 @@ export default function AdminPaymentsPage() {
                   <SelectItem value="failed">Failed</SelectItem>
                 </SelectContent>
               </Select>
-              <Button variant="outline" onClick={downloadCsv} disabled={filteredPayments.length === 0}>
+              <Button variant="outline" onClick={downloadPdf} disabled={filteredPayments.length === 0}>
                 <Download className="h-4 w-4 mr-2" />
-                Export CSV
+                Export PDF
               </Button>
             </div>
           </div>

@@ -153,6 +153,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
     }
 
+    // Require admins to log in with their exact email identifier.
+    // This prevents admin access via alternate identifiers like display-name or user-id.
+    if (user.role === "admin" && identifier !== user.email.trim().toLowerCase()) {
+      registerFailure(clientId, identifier)
+      return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
+    }
+
     const isValid = await bcrypt.compare(password, user.passwordHash)
     if (!isValid) {
       registerFailure(clientId, identifier)

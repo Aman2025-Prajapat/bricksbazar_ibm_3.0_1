@@ -63,6 +63,7 @@ export default function SuppliersPage() {
   const [availableCategories, setAvailableCategories] = useState<string[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [recommended, setRecommended] = useState<Supplier[]>([])
+  const [favoriteSupplierIds, setFavoriteSupplierIds] = useState<string[]>([])
   const [favoriteSupplierNames, setFavoriteSupplierNames] = useState<string[]>([])
   const firstLoadRef = useRef(true)
 
@@ -98,7 +99,7 @@ export default function SuppliersPage() {
             pagination?: { total?: number; hasNextPage?: boolean }
             filters?: { availableCategories?: string[] }
           }>,
-          favoritesResponse.json() as Promise<{ supplierNames?: string[] }>,
+          favoritesResponse.json() as Promise<{ supplierIds?: string[]; supplierNames?: string[] }>,
         ])
 
         if (!supplierResponse.ok || !supplierPayload.suppliers) {
@@ -114,6 +115,9 @@ export default function SuppliersPage() {
           setAvailableCategories(["all", ...categories.filter((item) => item.trim().length > 0)])
           if (favoritesResponse.ok && Array.isArray(favoritesPayload.supplierNames)) {
             setFavoriteSupplierNames(favoritesPayload.supplierNames)
+          }
+          if (favoritesResponse.ok && Array.isArray(favoritesPayload.supplierIds)) {
+            setFavoriteSupplierIds(favoritesPayload.supplierIds)
           }
         }
       } catch (loadError) {
@@ -141,9 +145,14 @@ export default function SuppliersPage() {
     return ["all"]
   }, [availableCategories])
 
+  const favoriteSupplierIdSet = useMemo(() => new Set(favoriteSupplierIds), [favoriteSupplierIds])
+  const favoriteSupplierNameSet = useMemo(() => new Set(favoriteSupplierNames), [favoriteSupplierNames])
+  const isSupplierFavorite = (supplier: Supplier) =>
+    favoriteSupplierIdSet.has(supplier.id) || favoriteSupplierNameSet.has(supplier.name)
+
   const favoriteSuppliers = useMemo(
-    () => suppliers.filter((supplier) => favoriteSupplierNames.includes(supplier.name)),
-    [suppliers, favoriteSupplierNames],
+    () => suppliers.filter((supplier) => favoriteSupplierIdSet.has(supplier.id) || favoriteSupplierNameSet.has(supplier.name)),
+    [suppliers, favoriteSupplierIdSet, favoriteSupplierNameSet],
   )
 
   const verifiedSuppliers = useMemo(
@@ -153,29 +162,39 @@ export default function SuppliersPage() {
 
   const filteredRecommended = recommended
 
-  const toggleFavorite = (supplierName: string) => {
-    const isFavorite = favoriteSupplierNames.includes(supplierName)
-    const next = isFavorite
-      ? favoriteSupplierNames.filter((item) => item !== supplierName)
-      : [...favoriteSupplierNames, supplierName]
-    setFavoriteSupplierNames(next)
+  const toggleFavorite = (supplier: Supplier) => {
+    const isFavorite = isSupplierFavorite(supplier)
+    const nextIds = isFavorite
+      ? favoriteSupplierIds.filter((item) => item !== supplier.id)
+      : [...favoriteSupplierIds, supplier.id]
+    const nextNames = isFavorite
+      ? favoriteSupplierNames.filter((item) => item !== supplier.name)
+      : [...favoriteSupplierNames, supplier.name]
+    setFavoriteSupplierIds(nextIds)
+    setFavoriteSupplierNames(nextNames)
 
     void fetch("/api/buyer/suppliers/favorites", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ supplierName, favorite: !isFavorite }),
+      body: JSON.stringify({ supplierId: supplier.id, supplierName: supplier.name, favorite: !isFavorite }),
     })
       .then(async (response) => {
         if (!response.ok) throw new Error("favorite update failed")
-        const payload = (await response.json()) as { supplierNames?: string[] }
+        const payload = (await response.json()) as { supplierIds?: string[]; supplierNames?: string[] }
+        if (Array.isArray(payload.supplierIds)) {
+          setFavoriteSupplierIds(payload.supplierIds)
+        }
         if (Array.isArray(payload.supplierNames)) {
           setFavoriteSupplierNames(payload.supplierNames)
         }
       })
       .catch(() => {
+        setFavoriteSupplierIds((current) =>
+          !isFavorite ? current.filter((item) => item !== supplier.id) : [...current, supplier.id],
+        )
         setFavoriteSupplierNames((current) =>
-          !isFavorite ? current.filter((item) => item !== supplierName) : [...current, supplierName],
+          !isFavorite ? current.filter((item) => item !== supplier.name) : [...current, supplier.name],
         )
       })
   }
@@ -230,10 +249,10 @@ export default function SuppliersPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => toggleFavorite(supplier.name)}
-                className={favoriteSupplierNames.includes(supplier.name) ? "text-red-500" : "text-muted-foreground"}
+                onClick={() => toggleFavorite(supplier)}
+                className={isSupplierFavorite(supplier) ? "text-red-500" : "text-muted-foreground"}
               >
-                <Heart className={`h-4 w-4 ${favoriteSupplierNames.includes(supplier.name) ? "fill-current" : ""}`} />
+                <Heart className={`h-4 w-4 ${isSupplierFavorite(supplier) ? "fill-current" : ""}`} />
               </Button>
             </div>
 

@@ -147,6 +147,7 @@ const statements = [
   )`,
   `CREATE TABLE IF NOT EXISTS market_supplier_favorites (
     user_id TEXT NOT NULL,
+    supplier_id TEXT,
     supplier_name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (user_id, supplier_name)
@@ -184,11 +185,32 @@ async function ensurePaymentColumns() {
   }
 }
 
+async function ensureSupplierFavoriteColumns() {
+  let names = new Set()
+  if (isPostgres) {
+    const columns = await prisma.$queryRawUnsafe(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'market_supplier_favorites'`,
+    )
+    names = new Set(columns.map((row) => row.column_name))
+  } else {
+    const columns = await prisma.$queryRawUnsafe(`PRAGMA table_info(market_supplier_favorites)`)
+    names = new Set(columns.map((row) => row.name))
+  }
+
+  if (!names.has("supplier_id")) {
+    await prisma.$executeRawUnsafe("ALTER TABLE market_supplier_favorites ADD COLUMN supplier_id TEXT")
+  }
+}
+
 async function main() {
   for (const statement of statements) {
     await prisma.$executeRawUnsafe(statement)
   }
   await ensurePaymentColumns()
+  await ensureSupplierFavoriteColumns()
 }
 
 main()

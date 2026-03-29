@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CreditCard, TrendingUp, Clock, Download, Loader2 } from "lucide-react"
+import { downloadPdfDocument } from "@/lib/pdf-export"
 
 type SellerPayment = { id: string; orderId: string; amount: number; method: string; status: "pending" | "paid" | "failed"; createdAt: string; commission?: number; netAmount?: number; buyerName?: string }
 
@@ -41,6 +42,35 @@ export default function SellerPaymentsPage() {
     return { totalGross, totalCommission, totalNet, pending }
   }, [payments])
 
+  const downloadReceipt = (payment: SellerPayment) => {
+    const commission = payment.commission || payment.amount * 0.05
+    const netAmount = payment.netAmount || payment.amount * 0.95
+    downloadPdfDocument({
+      filename: `${payment.orderId}-seller-receipt.pdf`,
+      title: "BricksBazar Seller Payment Receipt",
+      subtitle: `Order ${payment.orderId}`,
+      sections: [
+        {
+          heading: "Payment Details",
+          lines: [
+            `Buyer: ${payment.buyerName || "N/A"}`,
+            `Method: ${payment.method}`,
+            `Status: ${payment.status}`,
+            `Date: ${new Date(payment.createdAt).toLocaleString()}`,
+          ],
+        },
+        {
+          heading: "Amount Breakdown",
+          lines: [
+            `Gross Amount: Rs. ${payment.amount.toLocaleString()}`,
+            `Commission: Rs. ${Math.round(commission).toLocaleString()}`,
+            `Net Amount: Rs. ${Math.round(netAmount).toLocaleString()}`,
+          ],
+        },
+      ],
+    })
+  }
+
   return (
     <div className="space-y-6">
       <div><h1 className="text-3xl font-bold">Payment Management</h1><p className="text-muted-foreground">Track your earnings and payment history</p></div>
@@ -53,7 +83,7 @@ export default function SellerPaymentsPage() {
         <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Commission Paid</CardTitle><CreditCard className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">Rs. {stats.totalCommission.toLocaleString()}</div><p className="text-xs text-muted-foreground">Platform fees</p></CardContent></Card>
       </div>
 
-      <Card><CardHeader><CardTitle>Earnings History</CardTitle></CardHeader><CardContent>{loading ? <div className="py-10 text-muted-foreground flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin mr-2" />Loading payments...</div> : payments.length === 0 ? <div className="py-10 text-center text-muted-foreground">No seller payments found yet.</div> : <div className="space-y-4">{payments.map((payment) => <div key={payment.id} className="flex items-center justify-between p-4 border rounded-lg"><div><p className="font-medium">Order {payment.orderId}</p><p className="text-sm text-muted-foreground">Buyer: {payment.buyerName || "N/A"} | {payment.method} | {new Date(payment.createdAt).toLocaleDateString()}</p></div><div className="flex items-center gap-4"><div className="text-right"><p className="font-semibold">Rs. {(payment.netAmount || payment.amount).toLocaleString()}</p><p className="text-xs text-muted-foreground">Commission: Rs. {(payment.commission || payment.amount * 0.05).toLocaleString()}</p></div><Badge variant={payment.status === "paid" ? "default" : payment.status === "pending" ? "secondary" : "destructive"}>{payment.status}</Badge>{payment.status === "paid" && <Button size="sm" variant="outline"><Download className="h-4 w-4 mr-2" />Receipt</Button>}</div></div>)}</div>}</CardContent></Card>
+      <Card><CardHeader><CardTitle>Earnings History</CardTitle></CardHeader><CardContent>{loading ? <div className="py-10 text-muted-foreground flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin mr-2" />Loading payments...</div> : payments.length === 0 ? <div className="py-10 text-center text-muted-foreground">No seller payments found yet.</div> : <div className="space-y-4">{payments.map((payment) => <div key={payment.id} className="flex items-center justify-between p-4 border rounded-lg"><div><p className="font-medium">Order {payment.orderId}</p><p className="text-sm text-muted-foreground">Buyer: {payment.buyerName || "N/A"} | {payment.method} | {new Date(payment.createdAt).toLocaleDateString()}</p></div><div className="flex items-center gap-4"><div className="text-right"><p className="font-semibold">Rs. {(payment.netAmount || payment.amount).toLocaleString()}</p><p className="text-xs text-muted-foreground">Commission: Rs. {(payment.commission || payment.amount * 0.05).toLocaleString()}</p></div><Badge variant={payment.status === "paid" ? "default" : payment.status === "pending" ? "secondary" : "destructive"}>{payment.status}</Badge>{payment.status === "paid" && <Button size="sm" variant="outline" onClick={() => downloadReceipt(payment)}><Download className="h-4 w-4 mr-2" />Receipt PDF</Button>}</div></div>)}</div>}</CardContent></Card>
     </div>
   )
 }

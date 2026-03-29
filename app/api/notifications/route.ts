@@ -44,6 +44,7 @@ export async function GET(request: Request) {
 
   const orders = orderPage.items
   const orderIds = new Set(orders.map((order) => order.id))
+  const orderById = new Map(orders.map((order) => [order.id, order]))
   const notifications: UserNotification[] = []
 
   orders.forEach((order) => {
@@ -100,6 +101,41 @@ export async function GET(request: Request) {
     if (sessionUser.role === "distributor") return delivery.distributorId === sessionUser.userId
     return false
   })
+
+  if (sessionUser.role === "buyer") {
+    scopedDeliveries.forEach((delivery) => {
+      const order = orderById.get(delivery.orderId)
+      if (!order) return
+
+      const vehicleNumber = delivery.vehicleNumber.trim()
+      const driverName = delivery.driverName.trim()
+      const driverPhone = delivery.driverPhone.trim()
+      const hasAssignedVehicle = vehicleNumber.length > 0 && vehicleNumber.toLowerCase() !== "not assigned"
+      const hasAssignedDriver = driverName.length > 0 && driverName.toLowerCase() !== "not assigned"
+      const hasDriverPhone = driverPhone.length >= 7
+      const hasPlanningUpdateTime = new Date(delivery.updatedAt).getTime() > new Date(delivery.createdAt).getTime()
+
+      if (!hasPlanningUpdateTime && !hasAssignedVehicle && !hasAssignedDriver && !hasDriverPhone) {
+        return
+      }
+
+      const summaryParts = [`${order.orderNumber}`, delivery.distributorName, delivery.vehicleType]
+      if (hasAssignedVehicle) summaryParts.push(`Vehicle ${vehicleNumber}`)
+      if (hasAssignedDriver) summaryParts.push(`Driver ${driverName}`)
+      if (hasDriverPhone) summaryParts.push(`Call ${driverPhone}`)
+      if (delivery.etaMinutes > 0) summaryParts.push(`ETA ${delivery.etaMinutes} mins`)
+
+      notifications.push({
+        id: `delivery-plan-${delivery.id}-${delivery.updatedAt}`,
+        type: "delivery",
+        priority: "medium",
+        title: "Delivery planning updated",
+        message: summaryParts.join(" | "),
+        timestamp: delivery.updatedAt,
+        href: "/dashboard/buyer/orders",
+      })
+    })
+  }
 
   const deliveryAlertBundles = await Promise.all(scopedDeliveries.slice(0, 20).map((delivery) => getDeliveryAlerts(delivery.id)))
   deliveryAlertBundles.forEach((bundle) => {

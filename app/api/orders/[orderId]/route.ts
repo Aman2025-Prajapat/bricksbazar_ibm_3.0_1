@@ -67,7 +67,8 @@ export async function PATCH(request: Request, { params }: { params: { orderId: s
   const canBypassPaymentForDispatch =
     parsed.data.allowUnpaidDispatch === true && sessionUser.role === "distributor" && nextStatus === "shipped"
 
-  if ((nextStatus === "shipped" || nextStatus === "delivered") && !canBypassPaymentForDispatch) {
+  const isMovingToPaidGateStatus = order.status !== nextStatus && (nextStatus === "shipped" || nextStatus === "delivered")
+  if (isMovingToPaidGateStatus && !canBypassPaymentForDispatch) {
     const payment = await getPaymentByOrderId(order.id)
     if (!payment || payment.status !== "paid") {
       return NextResponse.json(

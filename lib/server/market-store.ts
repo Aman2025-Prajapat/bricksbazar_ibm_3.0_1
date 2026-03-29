@@ -134,6 +134,7 @@ export type DistributorLocation = {
 
 export type SupplierFavorite = {
   userId: string
+  supplierId?: string | null
   supplierName: string
   createdAt: string
 }
@@ -336,6 +337,7 @@ type DistributorLocationRow = {
 
 type SupplierFavoriteRow = {
   user_id: string
+  supplier_id: string | null
   supplier_name: string
   created_at: string
 }
@@ -566,6 +568,7 @@ function mapDistributorLocation(row: DistributorLocationRow): DistributorLocatio
 function mapSupplierFavorite(row: SupplierFavoriteRow): SupplierFavorite {
   return {
     userId: row.user_id,
+    supplierId: row.supplier_id ?? null,
     supplierName: row.supplier_name,
     createdAt: row.created_at,
   }
@@ -1119,11 +1122,14 @@ async function ensureMarketTables() {
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS market_supplier_favorites (
       user_id TEXT NOT NULL,
+      supplier_id TEXT,
       supplier_name TEXT NOT NULL,
       created_at TEXT NOT NULL,
       PRIMARY KEY (user_id, supplier_name)
     )
   `)
+
+  await safeAddColumn("market_supplier_favorites", "supplier_id TEXT")
 
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_products_category_idx ON market_products(category)")
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_products_seller_idx ON market_products(seller_id)")
@@ -1167,6 +1173,11 @@ async function ensureMarketTables() {
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_deliveries_distributor_idx ON market_deliveries(distributor_id)")
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_deliveries_location_ts_idx ON market_deliveries(last_location_at)")
   await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_deliveries_updated_idx ON market_deliveries(updated_at)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_supplier_favorites_user_idx ON market_supplier_favorites(user_id)")
+  await prisma.$executeRawUnsafe("CREATE INDEX IF NOT EXISTS market_supplier_favorites_supplier_id_idx ON market_supplier_favorites(supplier_id)")
+  await prisma.$executeRawUnsafe(
+    "CREATE UNIQUE INDEX IF NOT EXISTS market_supplier_favorites_user_supplier_id_uidx ON market_supplier_favorites(user_id, supplier_id) WHERE supplier_id IS NOT NULL",
+  )
 
   await prisma.$executeRawUnsafe(
     "CREATE INDEX IF NOT EXISTS market_delivery_locations_delivery_created_idx ON market_delivery_locations(delivery_id, created_at)",
@@ -1604,7 +1615,7 @@ export async function deleteDistributorLocation(input: { id: string; distributor
 export async function listSupplierFavorites(userId: string) {
   await ensureMarketTables()
   const rows = await prisma.$queryRawUnsafe<SupplierFavoriteRow[]>(
-    `SELECT user_id, supplier_name, created_at
+    `SELECT user_id, supplier_id, supplier_name, created_at
      FROM market_supplier_favorites
      WHERE user_id = ?
      ORDER BY created_at DESC`,
@@ -1613,26 +1624,44 @@ export async function listSupplierFavorites(userId: string) {
   return rows.map(mapSupplierFavorite)
 }
 
-export async function setSupplierFavorite(input: { userId: string; supplierName: string; favorite: boolean }) {
+export async function setSupplierFavorite(input: { userId: string; supplierId?: string | null; supplierName: string; favorite: boolean }) {
   await ensureMarketTables()
   const now = new Date().toISOString()
+  const normalizedSupplierId = (input.supplierId || "").trim() || null
+  const normalizedSupplierName = input.supplierName.trim()
+
   if (input.favorite) {
+    if (normalizedSupplierId) {
+      await prisma.$executeRawUnsafe(
+        "DELETE FROM market_supplier_favorites WHERE user_id = ? AND (supplier_id = ? OR supplier_name = ?)",
+        input.userId,
+        normalizedSupplierId,
+        normalizedSupplierName,
+      )
+    }
     await prisma.$executeRawUnsafe(
-      `INSERT INTO market_supplier_favorites (user_id, supplier_name, created_at)
-       VALUES (?, ?, ?)
+      `INSERT INTO market_supplier_favorites (user_id, supplier_id, supplier_name, created_at)
+       VALUES (?, ?, ?, ?)
        ON CONFLICT (user_id, supplier_name) DO NOTHING`,
       input.userId,
-      input.supplierName,
+      normalizedSupplierId,
+      normalizedSupplierName,
       now,
     )
     return
   }
 
-  await prisma.$executeRawUnsafe(
-    "DELETE FROM market_supplier_favorites WHERE user_id = ? AND supplier_name = ?",
-    input.userId,
-    input.supplierName,
-  )
+  if (normalizedSupplierId) {
+    await prisma.$executeRawUnsafe(
+      "DELETE FROM market_supplier_favorites WHERE user_id = ? AND (supplier_id = ? OR supplier_name = ?)",
+      input.userId,
+      normalizedSupplierId,
+      normalizedSupplierName,
+    )
+    return
+  }
+
+  await prisma.$executeRawUnsafe("DELETE FROM market_supplier_favorites WHERE user_id = ? AND supplier_name = ?", input.userId, normalizedSupplierName)
 }
 
 export async function updateOrderStatus(input: { orderId: string; status: OrderStatus }) {

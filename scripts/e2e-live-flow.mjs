@@ -1,5 +1,8 @@
+import crypto from "node:crypto"
+
 const baseUrl = (process.env.E2E_BASE_URL || "https://bricksbazaribmlive.vercel.app").replace(/\/+$/, "")
 const driverApiKey = (process.env.DRIVER_TRACKING_API_KEY || "").trim()
+const razorpayKeySecret = (process.env.RAZORPAY_KEY_SECRET || "").trim()
 
 function toIso(hoursFromNow = 24) {
   return new Date(Date.now() + hoursFromNow * 60 * 60 * 1000).toISOString()
@@ -273,15 +276,22 @@ async function main() {
   })
   await assertOk("payment intent create", createIntent)
 
+  const razorpayPaymentId = `pay_mock_${Date.now()}`
+  const razorpayOrderId = createIntent.data.gatewayOrderId
+  const razorpaySignature =
+    razorpayKeySecret && razorpayOrderId
+      ? crypto.createHmac("sha256", razorpayKeySecret).update(`${razorpayOrderId}|${razorpayPaymentId}`).digest("hex")
+      : `sig_mock_${Date.now()}`
+
   const verifyIntent = await apiRequest(buyer, "/api/payments", {
     method: "POST",
     json: {
       action: "verify_intent",
       provider: "razorpay",
       intentId: createIntent.data.intentId,
-      razorpayOrderId: createIntent.data.gatewayOrderId,
-      razorpayPaymentId: `pay_mock_${Date.now()}`,
-      razorpaySignature: `sig_mock_${Date.now()}`,
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
     },
   })
   await assertOk("payment intent verify", verifyIntent)

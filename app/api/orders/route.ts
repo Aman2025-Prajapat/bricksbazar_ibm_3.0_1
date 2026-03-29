@@ -96,6 +96,11 @@ export async function GET(request: Request) {
       distributorVerified: delivery ? verificationMap.get(delivery.distributorId) === true : false,
       deliveryStatus: delivery?.status,
       vehicleType: delivery?.vehicleType,
+      vehicleNumber: delivery?.vehicleNumber,
+      driverName: delivery?.driverName,
+      driverPhone: delivery?.driverPhone,
+      etaMinutes: delivery?.etaMinutes,
+      deliveryUpdatedAt: delivery?.updatedAt,
       supplierRating: ratingsByOrderId.get(order.id)
         ? {
             supplierId: ratingsByOrderId.get(order.id)!.supplierId,

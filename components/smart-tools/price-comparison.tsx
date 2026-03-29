@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle } from "lucide-react"
+import { downloadPdfDocument } from "@/lib/pdf-export"
 
 const priceData = [
   {
@@ -80,42 +81,28 @@ export default function PriceComparison() {
       }
     })
 
-    const header = [
-      "Supplier",
-      "Unit Price",
-      "Quantity",
-      "Base Total",
-      "Freight",
-      "Discount",
-      "Final Total",
-      "Distance",
-      "Rating",
+    const summaryLines = [
+      `Product: ${selectedProduct}`,
+      `Quantity: ${parsedQuantity.toLocaleString()}`,
+      `Best Unit Price: Rs. ${bestPrice.toFixed(2)}`,
+      `Average Unit Price: Rs. ${avgPrice.toFixed(2)}`,
+      `Potential Savings: Rs. ${savings.toFixed(0)}`,
     ]
 
-    const csv = [
-      header,
-      ...quoteRows.map((row) => [
-        row.supplier,
-        row.unitPrice.toFixed(2),
-        row.quantity,
-        row.baseTotal.toFixed(2),
-        row.freight.toFixed(2),
-        row.discount.toFixed(2),
-        row.finalTotal.toFixed(2),
-        row.distance,
-        row.rating.toFixed(1),
-      ]),
-    ]
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n")
+    const supplierLines = quoteRows.map(
+      (row, index) =>
+        `${index + 1}. ${row.supplier} | Unit: Rs. ${row.unitPrice.toFixed(2)} | Base: Rs. ${row.baseTotal.toFixed(2)} | Freight: Rs. ${row.freight.toFixed(2)} | Discount: Rs. ${row.discount.toFixed(2)} | Final: Rs. ${row.finalTotal.toFixed(2)} | Dist: ${row.distance} | Rating: ${row.rating.toFixed(1)}`,
+    )
 
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `supplier-quotes-${selectedProduct.replace(/\s+/g, "-").toLowerCase()}.csv`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadPdfDocument({
+      filename: `supplier-quotes-${selectedProduct.replace(/\s+/g, "-").toLowerCase()}.pdf`,
+      title: "BricksBazar Supplier Quote Report",
+      subtitle: "Detailed quote comparison",
+      sections: [
+        { heading: "Summary", lines: summaryLines },
+        { heading: "Supplier Quotes", lines: supplierLines },
+      ],
+    })
 
     try {
       const requestRecord = {
@@ -132,7 +119,7 @@ export default function PriceComparison() {
       // Ignore localStorage failures.
     }
 
-    setQuoteMessage(`Detailed quotes generated from ${suppliers.length} suppliers.`)
+    setQuoteMessage(`Detailed PDF quotes generated from ${suppliers.length} suppliers.`)
   }
 
   return (
