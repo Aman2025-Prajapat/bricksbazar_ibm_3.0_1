@@ -651,6 +651,7 @@ const MODEL_PATHS = {
 const BLUEPRINT_STORAGE_KEY = "bb_blueprint_studio_v2"
 const MODELS_CACHE_TTL_MS = 60_000
 const MARKET_RATES_CACHE_TTL_MS = 60_000
+const PLANNER_LAYOUT_GRID_STEP_FT = 0.5
 const SURVEY_FILE_ACCEPT = ".dxf,.dwg,.cad,.pdf"
 const GEO_MARKET_PROFILES: GeoMarketProfile[] = [
   { id: "national", label: "National Average", materialMultiplier: 1, laborRatePerSqFt: 240, supplierFeed: "All-India blended feed" },
@@ -832,6 +833,53 @@ function getRenderQualityLabel(value: number) {
 function clamp(v: number, min: number, max: number) {
   if (Number.isNaN(v)) return min
   return Math.min(Math.max(v, min), max)
+}
+
+function quantizeToPlannerGrid(value: number, step = PLANNER_LAYOUT_GRID_STEP_FT) {
+  if (!Number.isFinite(value) || step <= 0) return value
+  return Number((Math.round(value / step) * step).toFixed(3))
+}
+
+function snapPlacementToPlannerGrid({
+  x,
+  z,
+  w,
+  l,
+  plotLength,
+  plotWidth,
+  existingRooms,
+  blockedZones = [],
+}: {
+  x: number
+  z: number
+  w: number
+  l: number
+  plotLength: number
+  plotWidth: number
+  existingRooms: RoomConfig[]
+  blockedZones?: Array<Pick<RoomConfig, "x" | "z" | "w" | "l">>
+}) {
+  const snapped = {
+    x: quantizeToPlannerGrid(x),
+    z: quantizeToPlannerGrid(z),
+  }
+  const canSnap =
+    (Math.abs(snapped.x - x) > 0.001 || Math.abs(snapped.z - z) > 0.001) &&
+    canPlaceRoom({
+      x: snapped.x,
+      z: snapped.z,
+      w,
+      l,
+      plotLength,
+      plotWidth,
+      existingRooms,
+      blockedZones,
+    })
+  return canSnap ? snapped : { x, z }
+}
+
+function createPlannerRoomId(type: RoomType, floor: number, roomIndex: number) {
+  return `room-${type.toLowerCase()}-f${floor + 1}-${roomIndex}`
 }
 
 function normalizePlannerInputs(value?: Partial<PlannerInputs>): PlannerInputs {
@@ -1898,7 +1946,7 @@ function findEmptySpot({
   blockedZones = [],
   preferredNear,
   availableGrid,
-  gridStep = 1.2,
+  gridStep = PLANNER_LAYOUT_GRID_STEP_FT,
 }: {
   plotLength: number
   plotWidth: number
@@ -1947,7 +1995,7 @@ function findEmptySpot({
   return { x: cells[0].x, z: cells[0].z }
 }
 
-function getAvailableGrid(plotLength: number, plotWidth: number, gridStep = 1.2) {
+function getAvailableGrid(plotLength: number, plotWidth: number, gridStep = PLANNER_LAYOUT_GRID_STEP_FT) {
   const points: Array<{ x: number; z: number }> = []
   const xStart = -plotLength / 2 + 0.7
   const xEnd = plotLength / 2 - 0.7
@@ -2132,7 +2180,21 @@ function resolveFloorOverlaps({
   plotWidth: number
   blockedZones?: Array<Pick<RoomConfig, "x" | "z" | "w" | "l">>
 }) {
-  if (floorRooms.length <= 1) return floorRooms
+  if (floorRooms.length <= 1) {
+    return floorRooms.map((room) => {
+      const snapped = snapPlacementToPlannerGrid({
+        x: room.x,
+        z: room.z,
+        w: room.w,
+        l: room.l,
+        plotLength,
+        plotWidth,
+        existingRooms: floorRooms.filter((item) => item.id !== room.id),
+        blockedZones,
+      })
+      return { ...room, x: snapped.x, z: snapped.z }
+    })
+  }
   const resolved: RoomConfig[] = []
   const optionalTypes = new Set<RoomType>(["Store", "Verandah", "Balcony", "Garden", "Parking", "Pooja"])
   const priority: Record<RoomType, number> = {
@@ -2153,8 +2215,21 @@ function resolveFloorOverlaps({
     if (byPriority !== 0) return byPriority
     return b.w * b.l - a.w * a.l
   })
-  const gridStep = 1
+  const gridStep = PLANNER_LAYOUT_GRID_STEP_FT
   const availableGrid = getAvailableGrid(plotLength, plotWidth, gridStep)
+  const withSnappedPlacement = (room: RoomConfig, x: number, z: number) => {
+    const snapped = snapPlacementToPlannerGrid({
+      x,
+      z,
+      w: room.w,
+      l: room.l,
+      plotLength,
+      plotWidth,
+      existingRooms: resolved,
+      blockedZones,
+    })
+    return { ...room, x: snapped.x, z: snapped.z }
+  }
 
   const tryPlaceRoom = (room: RoomConfig, preferredNear: Pick<RoomConfig, "x" | "z"> | null) => {
     const shifted = shiftCandidateRightUntilClear({
@@ -2165,7 +2240,7 @@ function resolveFloorOverlaps({
       blockedZones,
     })
     if (shifted) {
-      return { ...room, x: shifted.x, z: shifted.z }
+      return withSnappedPlacement(room, shifted.x, shifted.z)
     }
 
     const spot = findEmptySpot({
@@ -2180,7 +2255,7 @@ function resolveFloorOverlaps({
       gridStep,
     })
     if (spot) {
-      return { ...room, x: spot.x, z: spot.z }
+      return withSnappedPlacement(room, spot.x, spot.z)
     }
 
     const byDistance = [...availableGrid].sort((a, b) => {
@@ -2201,7 +2276,7 @@ function resolveFloorOverlaps({
           blockedZones,
         })
       ) {
-        return { ...room, x: cell.x, z: cell.z }
+        return withSnappedPlacement(room, cell.x, cell.z)
       }
     }
 
@@ -2364,7 +2439,7 @@ function autoArrangeRoomsByVastu({
 }) {
   const floors = Array.from(new Set(rooms.map((room) => room.floor))).sort((a, b) => a - b)
   const arranged: RoomConfig[] = []
-  const availableGrid = getAvailableGrid(plotLength, plotWidth, 1.2)
+  const availableGrid = getAvailableGrid(plotLength, plotWidth, PLANNER_LAYOUT_GRID_STEP_FT)
 
   for (const floor of floors) {
     const floorRooms = rooms.filter((room) => room.floor === floor)
@@ -2466,7 +2541,7 @@ function autoArrangeRoomsByVastu({
           blockedZones: [],
           preferredNear,
           availableGrid,
-          gridStep: 1.2,
+          gridStep: PLANNER_LAYOUT_GRID_STEP_FT,
         })
         selected = fallback ?? null
       }
@@ -2635,7 +2710,7 @@ function createSmartLayout({
   const plotArea = plotLength * plotWidth
   const rooms: RoomConfig[] = []
   let roomIndex = 0
-  const gridStep = 1.2
+  const gridStep = PLANNER_LAYOUT_GRID_STEP_FT
   const availableGrid = getAvailableGrid(plotLength, plotWidth, gridStep)
   const blockedVoids: Array<Pick<RoomConfig, "x" | "z" | "w" | "l">> = []
   const circulationEnabled = Math.min(plotLength, plotWidth) >= 22 && plotLength * plotWidth <= 1300
@@ -2693,14 +2768,24 @@ function createSmartLayout({
       blockedZones: floorVoids,
     })
     if (!shifted) return null
+    const snappedPlacement = snapPlacementToPlannerGrid({
+      x: shifted.x,
+      z: shifted.z,
+      w: preset.w,
+      l: preset.l,
+      plotLength,
+      plotWidth,
+      existingRooms: floorRooms,
+      blockedZones: floorVoids,
+    })
 
     roomIndex += 1
     const newRoom: RoomConfig = {
-      id: `room-${type.toLowerCase()}-${Date.now()}-${roomIndex}`,
+      id: createPlannerRoomId(type, floor, roomIndex),
       type,
       floor,
-      x: shifted.x,
-      z: shifted.z,
+      x: snappedPlacement.x,
+      z: snappedPlacement.z,
       w: preset.w,
       l: preset.l,
       h: Math.min(preset.h, floorHeight),
@@ -2820,12 +2905,22 @@ function createSmartLayout({
       })
       if (canUseAnchor) {
         roomIndex += 1
-        const stairRoom: RoomConfig = {
-          id: `room-stairs-${Date.now()}-${roomIndex}`,
-          type: "Stairs",
-          floor,
+        const snappedPlacement = snapPlacementToPlannerGrid({
           x: stairAnchor.x,
           z: stairAnchor.z,
+          w: stairPreset.w,
+          l: stairPreset.l,
+          plotLength,
+          plotWidth,
+          existingRooms: floorRooms,
+          blockedZones: blockedVoids,
+        })
+        const stairRoom: RoomConfig = {
+          id: createPlannerRoomId("Stairs", floor, roomIndex),
+          type: "Stairs",
+          floor,
+          x: snappedPlacement.x,
+          z: snappedPlacement.z,
           w: stairPreset.w,
           l: stairPreset.l,
           h: Math.min(stairPreset.h, floorHeight),
@@ -3051,12 +3146,22 @@ function createSmartLayout({
           })
           if (canUseAnchor) {
             roomIndex += 1
-            const stairRoom: RoomConfig = {
-              id: `room-stairs-${Date.now()}-${roomIndex}`,
-              type: "Stairs",
-              floor,
+            const snappedPlacement = snapPlacementToPlannerGrid({
               x: stairAnchor.x,
               z: stairAnchor.z,
+              w: stairPreset.w,
+              l: stairPreset.l,
+              plotLength,
+              plotWidth,
+              existingRooms: floorRooms,
+              blockedZones: blockedVoids,
+            })
+            const stairRoom: RoomConfig = {
+              id: createPlannerRoomId("Stairs", floor, roomIndex),
+              type: "Stairs",
+              floor,
+              x: snappedPlacement.x,
+              z: snappedPlacement.z,
               w: stairPreset.w,
               l: stairPreset.l,
               h: Math.min(stairPreset.h, floorHeight),
@@ -3152,13 +3257,23 @@ function createSmartLayout({
           gridStep,
         })
         if (!spot) continue
-        roomIndex += 1
-        rooms.push({
-          id: `room-pooja-${Date.now()}-${roomIndex}`,
-          type: "Pooja",
-          floor,
+        const snappedPlacement = snapPlacementToPlannerGrid({
           x: spot.x,
           z: spot.z,
+          w: preset.w,
+          l: preset.l,
+          plotLength,
+          plotWidth,
+          existingRooms: floorRooms,
+          blockedZones: blockedVoids,
+        })
+        roomIndex += 1
+        rooms.push({
+          id: createPlannerRoomId("Pooja", floor, roomIndex),
+          type: "Pooja",
+          floor,
+          x: snappedPlacement.x,
+          z: snappedPlacement.z,
           w: preset.w,
           l: preset.l,
           h: Math.min(preset.h, floorHeight),
@@ -6285,7 +6400,7 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
     setPlanStage("editable_plan")
   }
 
-  const normalizeRequirements = (
+  const normalizeRequirements = useCallback((
     base: PlannerRequirements,
     patch: Partial<PlannerRequirements>,
     floors: number,
@@ -6304,8 +6419,8 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
       includeBoundary: patch.includeBoundary ?? base.includeBoundary,
       includeLandscapeGlass: patch.includeLandscapeGlass ?? base.includeLandscapeGlass,
     }
-  }
-  const buildPromptBaselineRequirements = (patch: WizardPatch, floors: number): PlannerRequirements => {
+  }, [])
+  const buildPromptBaselineRequirements = useCallback((patch: WizardPatch, floors: number): PlannerRequirements => {
     const hintedBedrooms = Math.round(clamp(patch.bedrooms ?? 2, 1, 4))
     const bhkDefaults = getBhkDefaults(hintedBedrooms)
     const estimatedBathrooms = Math.round(clamp(Math.round(hintedBedrooms / 2 + 0.5), 1, 4))
@@ -6324,13 +6439,13 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
       includeLandscapeGlass: false,
     }
     return normalizeRequirements(base, patch, floors)
-  }
+  }, [normalizeRequirements])
   const selectedPromptSuggestion =
     wizardSuggestions.find((suggestion) => suggestion.id === selectedWizardSuggestionId) ?? wizardSuggestions[0] ?? null
-  const calculateRoomMatrix = useCallback(
-    (patch: WizardPatch, rooms: RoomConfig[]): RoomMatrixReport => {
+  const calculateRoomMatrix = useCallback((patch: WizardPatch, rooms: RoomConfig[]): RoomMatrixReport => {
       const floors = Math.round(clamp(patch.floors ?? houseConfig.floors, 1, 4))
-      const requested = normalizeRequirements(requirements, patch, floors)
+      const promptBaseline = buildPromptBaselineRequirements(patch, floors)
+      const requested = normalizeRequirements(promptBaseline, patch, floors)
       const adjacencyGraph = buildAdjacencyGraph(rooms)
       const rows = REQUIREMENT_METRIC_ROWS
         .map((row) => {
@@ -6379,9 +6494,7 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
         score,
         mismatchCount: rows.filter((row) => row.status !== "Match").length,
       }
-    },
-    [houseConfig.floors, requirements],
-  )
+    }, [buildPromptBaselineRequirements, houseConfig.floors, normalizeRequirements])
   const validateConstraints = useCallback((rooms: RoomConfig[], constraints: PromptConstraintBundle, referencePatch: WizardPatch | null): ConstraintValidationReport => {
     const checks: PromptConstraintCheck[] = []
     const createFloorCountMap = (floors: number[]) => {
@@ -6564,9 +6677,52 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
     rows.push(`Recommended style: ${derivedArea <= 1100 ? "Compact Indian layout" : "Balanced family layout"}`)
     return rows.slice(0, 3)
   }, [parsedPromptPlan, plotFacing])
+  const promptPreviewBlockingReasons = useMemo(() => {
+    if (planningMode !== "prompt") return []
+    const reasons: string[] = []
+    if (!promptPipelineState.promptAnalyzed) reasons.push("Analyze prompt first.")
+    if (!promptPipelineState.suggestionSelected) reasons.push("Select an AI suggestion first.")
+    if (!promptPipelineState.planApplied) reasons.push("Apply selected plan first.")
+    if (houseConfig.rooms.length === 0) reasons.push("No rooms available to render preview.")
+    const matrixMismatchCount = promptPipelineState.matrixReady ? (promptRoomMatrixReport?.mismatchCount ?? 0) : 0
+    if (matrixMismatchCount > 0) {
+      reasons.push(`Room matrix has ${matrixMismatchCount} mismatch${matrixMismatchCount > 1 ? "es" : ""}. Run Auto-Match Prompt Layout.`)
+    }
+    if (promptPipelineState.constraintsReady && !promptConstraintReport.criticalPass) {
+      reasons.push(promptConstraintReport.blockingReasons[0] ?? "Hard constraints check failed.")
+    }
+    if (promptPipelineState.planApplied && layoutValidationReport && !layoutValidationReport.valid) {
+      reasons.push(`2D validation failed${layoutValidationReport.issues[0] ? `: ${layoutValidationReport.issues[0]}` : "."}`)
+    }
+    if (reasons.length === 0 && !promptPipelineState.previewReady) {
+      reasons.push("Run Auto-Match Prompt Layout to finalize prompt-to-layout alignment.")
+    }
+    return reasons
+  }, [
+    houseConfig.rooms.length,
+    layoutValidationReport,
+    planningMode,
+    promptConstraintReport.blockingReasons,
+    promptConstraintReport.criticalPass,
+    promptPipelineState.constraintsReady,
+    promptPipelineState.matrixReady,
+    promptPipelineState.planApplied,
+    promptPipelineState.previewReady,
+    promptPipelineState.promptAnalyzed,
+    promptPipelineState.suggestionSelected,
+    promptRoomMatrixReport?.mismatchCount,
+  ])
+  const promptPreviewReady =
+    planningMode === "prompt" &&
+    promptPipelineState.planApplied &&
+    promptPipelineState.previewReady &&
+    (promptRoomMatrixReport?.mismatchCount ?? 0) === 0 &&
+    promptConstraintReport.criticalPass &&
+    (layoutValidationReport?.valid ?? false) &&
+    houseConfig.rooms.length > 0
   const canRender3dPreview =
     planningMode === "prompt"
-      ? promptPipelineState.planApplied && houseConfig.rooms.length > 0
+      ? promptPreviewReady
       : houseConfig.rooms.length > 0
   const previewBlockedMessage =
     planningMode === "prompt"
@@ -6579,11 +6735,7 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
       : canRender3dPreview
   const previewGenerationBlockedMessage =
     planningMode === "prompt"
-      ? !promptPipelineState.planApplied
-        ? "Apply selected plan first."
-        : houseConfig.rooms.length === 0
-          ? "No rooms available to render preview."
-        : previewBlockedMessage
+      ? promptPreviewBlockingReasons[0] ?? previewBlockedMessage
       : previewBlockedMessage
 
   const updateRequirementCount = (key: RequirementKey, nextValue: number) => {
@@ -7588,7 +7740,8 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
     const prefsFloorCount = inferFloorCountFromPreferences(effectiveFloorPrefs)
     const selectedFloors = Math.round(clamp(Math.max(suggestion.patch.floors ?? houseConfig.floors, prefsFloorCount ?? 1), 1, 4))
     const selectedTotalSqFt = clamp(suggestion.patch.totalSqFt ?? houseConfig.totalSqFt, 200, 10000)
-    const selectedRequirements = normalizeRequirements(requirements, suggestion.patch, selectedFloors)
+    const promptBaseline = buildPromptBaselineRequirements(suggestion.patch, selectedFloors)
+    const selectedRequirements = normalizeRequirements(promptBaseline, suggestion.patch, selectedFloors)
     const feasiblePlan = enforceRealWorldFeasibility({
       totalSqFt: selectedTotalSqFt,
       floors: selectedFloors,
@@ -7664,115 +7817,143 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
     }
   }
   const applySelectedPlan = () => {
-    if (!ensureUnlockedForEdit("apply selected plan")) return
-    if (planningMode !== "prompt") return
-    if (!promptPipelineState.promptAnalyzed && wizardSuggestions.length === 0) {
-      setAiStatus("Analyze prompt first, then apply a suggestion.")
-      return
-    }
-    const selected = wizardSuggestions.find((suggestion) => suggestion.id === selectedWizardSuggestionId) ?? wizardSuggestions[0]
-    if (!selected) {
-      setAiStatus("No prompt suggestion available. Analyze a prompt first.")
-      return
-    }
-    const applyingStaleSuggestion = promptDraftDirty
-    let layout = generateAllFloorLayouts(selected)
-    if (!layout) {
-      layout = generateAllFloorLayouts(selected, undefined, true)
-      if (!layout) {
-        setAiStatus("Selected plan apply nahi ho paaya. Prompt re-analyze karke try karo.")
+    try {
+      if (!ensureUnlockedForEdit("apply selected plan")) return
+      if (planningMode !== "prompt") return
+      if (!promptPipelineState.promptAnalyzed && wizardSuggestions.length === 0) {
+        setAiStatus("Analyze prompt first, then apply a suggestion.")
         return
       }
-      setAiStatus("Strict rule me plan block tha. Best-effort mode me selected plan apply kiya gaya.")
-    }
-    const effectiveConstraints: PromptConstraintBundle = {
-      ...promptConstraints,
-      lockedRooms: mergeFloorPreferences(selected.floorPreferences, promptConstraints.lockedRooms),
-    }
-    let effectiveLayout = layout
-    let effectiveFloorPreferences = layout.floorPreferences
-    let roomMatrixReport = calculateRoomMatrix(selected.patch, effectiveLayout.rooms)
-    let constraintReport = validateConstraints(effectiveLayout.rooms, effectiveConstraints, selected.patch)
-    let autoMatchApplied = false
-    if (roomMatrixReport.mismatchCount > 0 || !constraintReport.criticalPass) {
-      const autoMatched = buildPromptAutoMatchResult(selected)
-      if (autoMatched) {
-        effectiveLayout = autoMatched.layout
-        effectiveFloorPreferences = autoMatched.floorPreferences
-        roomMatrixReport = autoMatched.roomMatrixReport
-        constraintReport = autoMatched.constraintReport
-        autoMatchApplied = true
+      const selected =
+        wizardSuggestions.find((suggestion) => suggestion.id === selectedWizardSuggestionId) ??
+        selectedPromptSuggestion ??
+        wizardSuggestions[0] ??
+        buildRecoveredPromptSuggestion()
+      if (!selected) {
+        setAiStatus("No prompt suggestion available. Analyze a prompt first.")
+        return
       }
+
+      setSelectedWizardSuggestionId(selected.id)
+      if (!promptPipelineState.suggestionSelected) {
+        setPromptPipelineStage("suggestion_selected", {
+          criticalConstraintsPass: false,
+          previewReady: false,
+          blockingReasons: ["Applying selected plan..."],
+        })
+      }
+
+      const applyingStaleSuggestion = promptDraftDirty
+      let layout = generateAllFloorLayouts(selected)
+      if (!layout) {
+        layout = generateAllFloorLayouts(selected, undefined, true)
+        if (!layout) {
+          setAiStatus("Selected plan apply nahi ho paaya. Prompt re-analyze karke try karo.")
+          return
+        }
+        setAiStatus("Strict rule me plan block tha. Best-effort mode me selected plan apply kiya gaya.")
+      }
+      const effectiveConstraints: PromptConstraintBundle = {
+        ...promptConstraints,
+        lockedRooms: mergeFloorPreferences(selected.floorPreferences, promptConstraints.lockedRooms),
+      }
+      let effectiveLayout = layout
+      let effectiveFloorPreferences = layout.floorPreferences
+      let roomMatrixReport = calculateRoomMatrix(selected.patch, effectiveLayout.rooms)
+      let constraintReport = validateConstraints(effectiveLayout.rooms, effectiveConstraints, selected.patch)
+      let autoMatchApplied = false
+      if (roomMatrixReport.mismatchCount > 0 || !constraintReport.criticalPass) {
+        const autoMatched = buildPromptAutoMatchResult(selected)
+        if (autoMatched) {
+          effectiveLayout = autoMatched.layout
+          effectiveFloorPreferences = autoMatched.floorPreferences
+          roomMatrixReport = autoMatched.roomMatrixReport
+          constraintReport = autoMatched.constraintReport
+          autoMatchApplied = true
+        }
+      }
+      if (selected.planStyle !== plannerInputs.planStyle) {
+        setPlannerInputs((prev) => ({ ...prev, planStyle: selected.planStyle, parkingRequired: effectiveLayout.requirements.parkingSpaces > 0 }))
+      } else {
+        setPlannerInputs((prev) => ({ ...prev, parkingRequired: effectiveLayout.requirements.parkingSpaces > 0 }))
+      }
+      setPromptPipelineStage("plan_applied", {
+        criticalConstraintsPass: false,
+        previewReady: false,
+        blockingReasons: ["Room matrix and hard constraints are being validated."],
+      })
+      setPromptMismatchReviewed(false)
+      setLastPromptPatch(selected.patch)
+      setPromptConstraints(effectiveConstraints)
+      setRoomFloorPreferences(effectiveFloorPreferences)
+      setRequirements(effectiveLayout.requirements)
+      setLastRequestedRequirements(effectiveLayout.requirements)
+      setLastFeasibilityNotes(effectiveLayout.feasibility.reasons)
+      setFeasibilityReport(effectiveLayout.feasibility)
+      setLayoutValidationReport(effectiveLayout.validation)
+      setHouseConfig((prev) => ({
+        ...prev,
+        totalSqFt: effectiveLayout.totalSqFt,
+        floors: effectiveLayout.floors,
+        floorHeight: effectiveLayout.floorHeight,
+        rooms: effectiveLayout.rooms,
+      }))
+      setSelectedRoomId(effectiveLayout.rooms[0]?.id ?? null)
+      setPlanStage("editable_plan")
+      setPromptPipelineStage("matrix_ready", {
+        criticalConstraintsPass: false,
+        previewReady: false,
+        blockingReasons: roomMatrixReport.mismatchCount > 0 ? ["Room matrix mismatch found. Auto-match attempted."] : ["Running hard constraints check."],
+      })
+      const promptBlockingReasons: string[] = []
+      if (roomMatrixReport.mismatchCount > 0) {
+        promptBlockingReasons.push(`Room matrix has ${roomMatrixReport.mismatchCount} mismatch${roomMatrixReport.mismatchCount > 1 ? "es" : ""}.`)
+      }
+      if (!constraintReport.criticalPass) {
+        promptBlockingReasons.push(...constraintReport.blockingReasons)
+      }
+      if (!effectiveLayout.validation.valid) {
+        promptBlockingReasons.push(
+          `2D validation failed${effectiveLayout.validation.issues[0] ? `: ${effectiveLayout.validation.issues[0]}` : "."}`,
+        )
+      }
+      const autoPreviewReady = promptBlockingReasons.length === 0
+      setPromptMismatchReviewed(autoPreviewReady)
+      setPromptPipelineStage(autoPreviewReady ? "preview_ready" : "constraints_ready", {
+        criticalConstraintsPass: constraintReport.criticalPass && effectiveLayout.validation.valid,
+        previewReady: autoPreviewReady,
+        blockingReasons: autoPreviewReady ? [] : promptBlockingReasons,
+      })
+      setPromptPipelineContext((prev) => ({
+        ...prev,
+        generatedLayout: effectiveLayout,
+        roomMatrixReport,
+        constraintReport,
+      }))
+      const feasibilityMsg =
+        effectiveLayout.feasibility.status === "partially_feasible"
+          ? `Partially feasible: ${effectiveLayout.feasibility.suggestions.slice(0, 2).join(" | ")}.`
+          : effectiveLayout.feasibility.status === "not_feasible"
+            ? `Not feasible under strict rules: ${effectiveLayout.feasibility.reasons.slice(0, 2).join(" | ")}. Best-effort layout applied.`
+            : "Feasible."
+      const stalePromptMsg = applyingStaleSuggestion
+        ? " Note: prompt text changed after last analyze; re-analyze later for best match."
+        : ""
+      const autoMatchMsg = autoMatchApplied
+        ? autoPreviewReady
+          ? " Auto-match aligned prompt with generated layout."
+          : " Auto-match attempted, but some hard constraints still need manual fix."
+        : ""
+      const blockedMsg = !autoPreviewReady && promptBlockingReasons.length > 0 ? ` Blocking: ${promptBlockingReasons[0]}` : ""
+      setAiStatus(
+        autoPreviewReady
+          ? `Selected plan applied. ${feasibilityMsg}${stalePromptMsg}${autoMatchMsg} Prompt validation passed and 3D preview is unlocked.`
+          : `Selected plan applied. ${feasibilityMsg}${stalePromptMsg}${autoMatchMsg} Room matrix + hard constraints updated.${blockedMsg}`,
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown apply-plan error"
+      setAiStatus(`Apply selected plan failed: ${message}`)
     }
-    if (selected.planStyle !== plannerInputs.planStyle) {
-      setPlannerInputs((prev) => ({ ...prev, planStyle: selected.planStyle, parkingRequired: effectiveLayout.requirements.parkingSpaces > 0 }))
-    } else {
-      setPlannerInputs((prev) => ({ ...prev, parkingRequired: effectiveLayout.requirements.parkingSpaces > 0 }))
-    }
-    setPromptPipelineStage("plan_applied", {
-      criticalConstraintsPass: false,
-      previewReady: false,
-      blockingReasons: ["Room matrix and hard constraints are being validated."],
-    })
-    setPromptMismatchReviewed(false)
-    setLastPromptPatch(selected.patch)
-    setPromptConstraints(effectiveConstraints)
-    setRoomFloorPreferences(effectiveFloorPreferences)
-    setRequirements(effectiveLayout.requirements)
-    setLastRequestedRequirements(effectiveLayout.requirements)
-    setLastFeasibilityNotes(effectiveLayout.feasibility.reasons)
-    setFeasibilityReport(effectiveLayout.feasibility)
-    setLayoutValidationReport(effectiveLayout.validation)
-    setHouseConfig((prev) => ({
-      ...prev,
-      totalSqFt: effectiveLayout.totalSqFt,
-      floors: effectiveLayout.floors,
-      floorHeight: effectiveLayout.floorHeight,
-      rooms: effectiveLayout.rooms,
-    }))
-    setSelectedRoomId(effectiveLayout.rooms[0]?.id ?? null)
-    setPlanStage("editable_plan")
-    setPromptPipelineStage("matrix_ready", {
-      criticalConstraintsPass: false,
-      previewReady: false,
-      blockingReasons: roomMatrixReport.mismatchCount > 0 ? ["Room matrix mismatch found. Auto-match attempted."] : ["Running hard constraints check."],
-    })
-    const autoPreviewReady = roomMatrixReport.mismatchCount === 0 && constraintReport.criticalPass
-    setPromptMismatchReviewed(autoPreviewReady)
-    setPromptPipelineStage(autoPreviewReady ? "preview_ready" : "constraints_ready", {
-      criticalConstraintsPass: constraintReport.criticalPass,
-      previewReady: autoPreviewReady,
-      blockingReasons: autoPreviewReady
-        ? []
-        : constraintReport.criticalPass
-          ? ["Auto-match already attempted. Use Auto-Match Prompt Layout again to finalize prompt-to-3D alignment."]
-          : constraintReport.blockingReasons,
-    })
-    setPromptPipelineContext((prev) => ({
-      ...prev,
-      generatedLayout: effectiveLayout,
-      roomMatrixReport,
-      constraintReport,
-    }))
-    const feasibilityMsg =
-      effectiveLayout.feasibility.status === "partially_feasible"
-        ? `Partially feasible: ${effectiveLayout.feasibility.suggestions.slice(0, 2).join(" | ")}.`
-        : effectiveLayout.feasibility.status === "not_feasible"
-          ? `Not feasible under strict rules: ${effectiveLayout.feasibility.reasons.slice(0, 2).join(" | ")}. Best-effort layout applied.`
-          : "Feasible."
-    const stalePromptMsg = applyingStaleSuggestion
-      ? " Note: prompt text changed after last analyze; re-analyze later for best match."
-      : ""
-    const autoMatchMsg = autoMatchApplied
-      ? autoPreviewReady
-        ? " Auto-match aligned prompt with generated layout."
-        : " Auto-match attempted, but some hard constraints still need manual fix."
-      : ""
-    setAiStatus(
-      autoPreviewReady
-        ? `Selected plan applied. ${feasibilityMsg}${stalePromptMsg}${autoMatchMsg} Prompt validation passed and 3D preview is unlocked.`
-        : `Selected plan applied. ${feasibilityMsg}${stalePromptMsg}${autoMatchMsg} Room matrix + hard constraints updated.`,
-    )
   }
 
   const enforcePromptConstraintsOnCurrentLayout = useCallback(
@@ -7911,9 +8092,32 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
       floorPreferences: mergedLockedPrefs,
     }
   }
+  const buildRecoveredPromptSuggestion = (): AISuggestion | null => {
+    if (!lastPromptPatch) return null
+    const recoveredFloors = Math.round(clamp(lastPromptPatch.floors ?? houseConfig.floors, 1, 4))
+    const baseline = buildPromptBaselineRequirements(lastPromptPatch, recoveredFloors)
+    const recoveredPatch = sanitizeWizardPatch({
+      ...baseline,
+      ...lastPromptPatch,
+      floors: recoveredFloors,
+      totalSqFt: clamp(lastPromptPatch.totalSqFt ?? houseConfig.totalSqFt, 200, 10000),
+    })
+    const recoveredFloorPreferences = mergeFloorPreferences(roomFloorPreferences, promptConstraints.lockedRooms)
+    return {
+      id: "prompt_exact",
+      label: "Recovered Prompt Plan",
+      summary: "Recovered from saved prompt context.",
+      planStyle: plannerInputs.planStyle,
+      patch: recoveredPatch,
+      floorPreferences: recoveredFloorPreferences,
+      feasibility: "partially_feasible",
+      feasibilityNotes: ["Using last parsed prompt snapshot."],
+    }
+  }
 
   const fixPromptMismatchAndRegenerate = () => {
-    if (!lastPromptPatch || !selectedPromptSuggestion) {
+    const suggestionForRepair = selectedPromptSuggestion ?? buildRecoveredPromptSuggestion()
+    if (!lastPromptPatch || !suggestionForRepair) {
       setAiStatus("Analyze prompt and apply selected plan before auto-match.")
       return
     }
@@ -7925,7 +8129,7 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
       setAiStatus("Plan locked hai. Unlock karke auto-match apply karo.")
       return
     }
-    const autoMatched = buildPromptAutoMatchResult(selectedPromptSuggestion)
+    const autoMatched = buildPromptAutoMatchResult(suggestionForRepair)
     if (!autoMatched) return
     setRoomFloorPreferences(autoMatched.floorPreferences)
     setRequirements(autoMatched.layout.requirements)
@@ -7943,7 +8147,21 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
     setSelectedRoomId(autoMatched.layout.rooms[0]?.id ?? null)
     setPlanStage("editable_plan")
 
-    const previewReady = autoMatched.roomMatrixReport.mismatchCount === 0 && autoMatched.constraintReport.criticalPass
+    const autoMatchBlockingReasons: string[] = []
+    if (autoMatched.roomMatrixReport.mismatchCount > 0) {
+      autoMatchBlockingReasons.push(
+        `Room matrix has ${autoMatched.roomMatrixReport.mismatchCount} mismatch${autoMatched.roomMatrixReport.mismatchCount > 1 ? "es" : ""}.`,
+      )
+    }
+    if (!autoMatched.constraintReport.criticalPass) {
+      autoMatchBlockingReasons.push(...autoMatched.constraintReport.blockingReasons)
+    }
+    if (!autoMatched.layout.validation.valid) {
+      autoMatchBlockingReasons.push(
+        `2D validation failed${autoMatched.layout.validation.issues[0] ? `: ${autoMatched.layout.validation.issues[0]}` : "."}`,
+      )
+    }
+    const previewReady = autoMatchBlockingReasons.length === 0
     setPromptMismatchReviewed(true)
     setPromptPipelineContext((prev) => ({
       ...prev,
@@ -7952,9 +8170,9 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
       constraintReport: autoMatched.constraintReport,
     }))
     setPromptPipelineStage(previewReady ? "preview_ready" : "mismatch_fixed", {
-      criticalConstraintsPass: previewReady,
+      criticalConstraintsPass: autoMatched.constraintReport.criticalPass && autoMatched.layout.validation.valid,
       previewReady,
-      blockingReasons: previewReady ? [] : autoMatched.constraintReport.blockingReasons,
+      blockingReasons: previewReady ? [] : autoMatchBlockingReasons,
     })
     if (previewReady) {
       setAiStatus("Prompt auto-match completed. Required rooms repaired, intent constraints re-applied, and 3D preview gate unlocked.")
@@ -8812,9 +9030,19 @@ export function BlueprintStudio({ projectId = null, adminMode = false }: Bluepri
                             )}
                           </button>
                         ))}
-                        <Button onClick={applySelectedPlan} className="w-full">
+                        <Button
+                          type="button"
+                          onClick={applySelectedPlan}
+                          className="w-full"
+                          disabled={wizardLoading || wizardSuggestions.length === 0}
+                        >
                           Apply Selected Plan
                         </Button>
+                        {wizardSuggestions.length === 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            Analyze prompt first to unlock plan apply.
+                          </p>
+                        )}
                         {parsedPromptPlan && (
                           <div className="rounded-md border p-2 space-y-2 text-xs">
                             <p className="font-medium">Prompt Parse Snapshot</p>

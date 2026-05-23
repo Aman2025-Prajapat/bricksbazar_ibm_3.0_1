@@ -19,7 +19,7 @@ export default function SellerAnalyticsPage() {
     const loadData = async () => {
       try {
         const [productsRes, ordersRes, paymentsRes] = await Promise.all([
-          fetch("/api/products", { credentials: "include" }),
+          fetch("/api/products?scope=self", { credentials: "include" }),
           fetch("/api/orders", { credentials: "include" }),
           fetch("/api/payments", { credentials: "include" }),
         ])

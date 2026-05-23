@@ -28,6 +28,103 @@ const DIRECTION_VALUES = [
   "NorthWest",
   "Center",
 ] as const
+const WALL_OUTER_FT = 0.75
+const WALL_INNER_FT = 0.5
+
+const ARCHITECT_SYSTEM_INSTRUCTION = [
+  "You are BricksBazar-Architect-Parser.",
+  "Goal: Convert user house-planning prompt into STRICT technical JSON for deterministic layout generation.",
+  "Output ONLY valid JSON. Do not output markdown or prose.",
+  "Hard rules:",
+  "1) Never invent extra rooms beyond user request unless required by safety or feasibility.",
+  "2) If floors > 1, staircase is mandatory and must be reachable from Living or Lobby.",
+  "3) Use feet units only.",
+  `4) Outer wall thickness is fixed at ${WALL_OUTER_FT} ft and inner wall thickness is fixed at ${WALL_INNER_FT} ft.`,
+  "5) Keep geometry axis-aligned (rectangular rooms).",
+  "6) Keep room-count consistency with prompt intent.",
+  "7) If data is missing, infer safely and record assumptions.",
+  "8) If request is impossible, set validation.status = needs_revision and list blocking reasons.",
+  "Minimum room sizes in ft: Bedroom 10x10, Kitchen 8x7, Bathroom 5x7, Living 10x12, Pooja 4x4, Parking 8x14, Stairs 6x10.",
+].join("\n")
+
+const GEMINI_STRICT_RESPONSE_SCHEMA: Record<string, unknown> = {
+  type: "OBJECT",
+  properties: {
+    version: { type: "STRING" },
+    prompt_normalized: { type: "STRING" },
+    plot: {
+      type: "OBJECT",
+      properties: {
+        length_ft: { type: "NUMBER", nullable: true },
+        breadth_ft: { type: "NUMBER", nullable: true },
+        area_sqft: { type: "NUMBER", nullable: true },
+        facing: { type: "STRING", enum: ["North", "South", "East", "West"], nullable: true },
+      },
+    },
+    floors: { type: "INTEGER" },
+    requirements: {
+      type: "OBJECT",
+      properties: {
+        bedrooms: { type: "INTEGER" },
+        kitchens: { type: "INTEGER" },
+        bathrooms: { type: "INTEGER" },
+        living: { type: "INTEGER" },
+        pooja: { type: "INTEGER" },
+        parking: { type: "INTEGER" },
+        balcony: { type: "INTEGER" },
+      },
+    },
+    constraints: {
+      type: "OBJECT",
+      properties: {
+        outer_wall_ft: { type: "NUMBER" },
+        inner_wall_ft: { type: "NUMBER" },
+        grid_step_ft: { type: "NUMBER" },
+        stairs_required: { type: "BOOLEAN" },
+      },
+    },
+    floor_preferences: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          room_type: { type: "STRING", enum: FLOOR_ROOM_TYPES },
+          floor: { type: "INTEGER" },
+          count: { type: "INTEGER" },
+        },
+      },
+    },
+    validation: {
+      type: "OBJECT",
+      properties: {
+        status: { type: "STRING", enum: ["pass", "partial", "needs_revision"] },
+        issues: { type: "ARRAY", items: { type: "STRING" } },
+        warnings: { type: "ARRAY", items: { type: "STRING" } },
+      },
+    },
+    assumptions: { type: "ARRAY", items: { type: "STRING" } },
+    adjacencyRules: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          room: { type: "STRING", enum: FLOOR_ROOM_TYPES },
+          near: { type: "STRING", enum: FLOOR_ROOM_TYPES },
+        },
+      },
+    },
+    directionRules: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          room: { type: "STRING", enum: FLOOR_ROOM_TYPES },
+          direction: { type: "STRING", enum: DIRECTION_VALUES },
+        },
+      },
+    },
+  },
+}
 
 const requestSchema = z.object({
   input: z.string().min(3).max(1200),
@@ -82,13 +179,74 @@ const aiParsedSchema = requirementsSchema.extend({
   adjacencyRules: z.array(adjacencyRuleSchema).max(20).optional(),
   directionRules: z.array(directionRuleSchema).max(20).optional(),
 })
+const strictModelSchema = z.object({
+  version: z.string().optional(),
+  prompt_normalized: z.string().optional(),
+  plot: z
+    .object({
+      length_ft: z.number().min(12).max(160).nullable().optional(),
+      breadth_ft: z.number().min(12).max(160).nullable().optional(),
+      area_sqft: z.number().min(200).max(10000).nullable().optional(),
+      facing: z.enum(["North", "South", "East", "West"]).nullable().optional(),
+    })
+    .partial()
+    .optional(),
+  floors: z.number().int().min(1).max(4).optional(),
+  requirements: z
+    .object({
+      bedrooms: z.number().int().min(0).max(8).optional(),
+      kitchens: z.number().int().min(0).max(4).optional(),
+      bathrooms: z.number().int().min(0).max(8).optional(),
+      living: z.number().int().min(0).max(3).optional(),
+      pooja: z.number().int().min(0).max(2).optional(),
+      parking: z.number().int().min(0).max(2).optional(),
+      balcony: z.number().int().min(0).max(3).optional(),
+    })
+    .partial()
+    .optional(),
+  constraints: z
+    .object({
+      outer_wall_ft: z.number().optional(),
+      inner_wall_ft: z.number().optional(),
+      grid_step_ft: z.number().optional(),
+      stairs_required: z.boolean().optional(),
+    })
+    .partial()
+    .optional(),
+  floor_preferences: z
+    .array(
+      z.object({
+        room_type: z.enum(FLOOR_ROOM_TYPES),
+        floor: z.number().int().min(0).max(3),
+        count: z.number().int().min(1).max(8),
+      }),
+    )
+    .max(60)
+    .optional(),
+  adjacencyRules: z.array(adjacencyRuleSchema).max(20).optional(),
+  directionRules: z.array(directionRuleSchema).max(20).optional(),
+  validation: z
+    .object({
+      status: z.enum(["pass", "partial", "needs_revision"]).optional(),
+      issues: z.array(z.string()).max(20).optional(),
+      warnings: z.array(z.string()).max(20).optional(),
+    })
+    .partial()
+    .optional(),
+  assumptions: z.array(z.string()).max(20).optional(),
+})
 
 type RequirementsPatch = z.infer<typeof requirementsSchema>
 type FloorAssignments = z.infer<typeof floorAssignmentsSchema>
 type AiParsed = z.infer<typeof aiParsedSchema>
+type StrictModelParsed = z.infer<typeof strictModelSchema>
 type FloorRoomType = (typeof FLOOR_ROOM_TYPES)[number]
 type AdjacencyRule = z.infer<typeof adjacencyRuleSchema>
 type DirectionRule = z.infer<typeof directionRuleSchema>
+type GeminiParseResult = {
+  parsed: AiParsed | null
+  strictModel: StrictModelParsed | null
+}
 
 const ROOM_TYPES: FloorRoomType[] = [...FLOOR_ROOM_TYPES]
 
@@ -125,6 +283,7 @@ function normalizePromptInput(input: string) {
     normalized,
   )
   return withWordNumbers
+    .replace(/[\u00d7]/g, "x")
     .replace(/\bfrist\b/g, "first")
     .replace(/\bfrst\b/g, "first")
     .replace(/\bsecand\b/g, "second")
@@ -190,6 +349,7 @@ function detectPromptConflicts(input: string) {
 
 function regexFallback(input: string) {
   const normalizedInput = normalizePromptInput(input)
+  const dimensions = parseDimensionAreaFromPrompt(input)
   const extract = (pattern: RegExp) => {
     const match = normalizedInput.match(pattern)
     return match?.[1] ? Number.parseInt(match[1], 10) : undefined
@@ -202,7 +362,7 @@ function regexFallback(input: string) {
     return before.test(normalizedInput) || after.test(normalizedInput)
   }
 
-  const totalSqFt = extract(/(\d{3,5})\s*(sq\s*ft|sqft|square\s*feet|sft|sq\.?\s?feet)/)
+  const totalSqFt = extract(/(\d{3,5})\s*(sq\s*ft|sqft|square\s*feet|sft|sq\.?\s?feet)/) ?? dimensions?.totalSqFt
   const floors =
     extract(/(\d)\s*(floor|floors|storey|storeys|story|stories|level|tala|tal|manzil)/) ??
     (/\b(duplex|double\s*storey|double\s*story|two\s*storey|two\s*story)\b/.test(normalizedInput) ? 2 : undefined)
@@ -472,43 +632,158 @@ function mergeFloorAssignments(base: FloorAssignments, override?: FloorAssignmen
   return merged
 }
 
-function extractModelJson(text: string) {
+function parseDimensionAreaFromPrompt(input: string) {
+  const normalized = normalizePromptInput(input)
+  const match = normalized.match(
+    /(\d{2,3}(?:\.\d+)?)\s*(?:ft|feet|foot|')?\s*(?:x|\u00d7|\*|by)\s*(\d{2,3}(?:\.\d+)?)(?:\s*(?:ft|feet|foot|'))?\b/i,
+  )
+  if (!match?.[1] || !match[2]) return null
+  const length = Number.parseFloat(match[1])
+  const breadth = Number.parseFloat(match[2])
+  if (!Number.isFinite(length) || !Number.isFinite(breadth)) return null
+  const lengthFt = Math.min(Math.max(length, 12), 160)
+  const breadthFt = Math.min(Math.max(breadth, 12), 160)
+  return {
+    lengthFt,
+    breadthFt,
+    totalSqFt: Math.round(lengthFt * breadthFt),
+  }
+}
+
+function toFloorAssignmentsFromStrict(model: StrictModelParsed): FloorAssignments {
+  const prefs: FloorAssignments = {}
+  for (const item of model.floor_preferences ?? []) {
+    const roomType = item.room_type
+    const floor = item.floor
+    const count = Math.min(Math.max(item.count, 1), 8)
+    if (!prefs[roomType]) prefs[roomType] = []
+    for (let i = 0; i < count; i += 1) {
+      prefs[roomType]?.push(floor)
+    }
+  }
+  const validated = floorAssignmentsSchema.safeParse(prefs)
+  return validated.success ? validated.data : {}
+}
+
+function toAiParsedFromStrict(model: StrictModelParsed): AiParsed {
+  const requirementsFromStrict: RequirementsPatch = {
+    totalSqFt:
+      model.plot?.area_sqft ??
+      (model.plot?.length_ft && model.plot?.breadth_ft ? Math.round(model.plot.length_ft * model.plot.breadth_ft) : undefined),
+    floors: model.floors,
+    bedrooms: model.requirements?.bedrooms,
+    kitchens: model.requirements?.kitchens,
+    bathrooms: model.requirements?.bathrooms,
+    poojaRooms: model.requirements?.pooja,
+    parkingSpaces: model.requirements?.parking,
+    balconyRooms: model.requirements?.balcony,
+    includeStairs:
+      model.constraints?.stairs_required ??
+      (typeof model.floors === "number" ? model.floors > 1 : undefined),
+  }
+  const floorAssignments = toFloorAssignmentsFromStrict(model)
+  return {
+    ...requirementsFromStrict,
+    floorAssignments,
+    lockedRooms: floorAssignments,
+    adjacencyRules: model.adjacencyRules,
+    directionRules: model.directionRules,
+  }
+}
+
+function enforceArchitecturalHardRules(args: {
+  requirements: RequirementsPatch
+  floorAssignments: FloorAssignments
+  lockedRooms: FloorAssignments
+  adjacencyRules: AdjacencyRule[]
+}) {
+  const nextRequirements: RequirementsPatch = { ...args.requirements }
+  const nextFloorAssignments: FloorAssignments = mergeFloorAssignments(args.floorAssignments, {})
+  const nextLockedRooms: FloorAssignments = mergeFloorAssignments(args.lockedRooms, {})
+  const adjacencyRules = [...args.adjacencyRules]
+
+  const floors = nextRequirements.floors ?? 1
+  if (floors > 1) {
+    nextRequirements.includeStairs = true
+    if (!nextFloorAssignments.Stairs || nextFloorAssignments.Stairs.length === 0) {
+      nextFloorAssignments.Stairs = [0]
+    }
+    if (!nextLockedRooms.Stairs || nextLockedRooms.Stairs.length === 0) {
+      nextLockedRooms.Stairs = [0]
+    }
+    const hasStairsLivingAdj = adjacencyRules.some((rule) => rule.room === "Stairs" && rule.near === "Living")
+    if (!hasStairsLivingAdj) {
+      adjacencyRules.push({ room: "Stairs", near: "Living" })
+    }
+  }
+
+  return {
+    requirements: requirementsSchema.parse(nextRequirements),
+    floorAssignments: floorAssignmentsSchema.parse(nextFloorAssignments),
+    lockedRooms: floorAssignmentsSchema.parse(nextLockedRooms),
+    adjacencyRules: mergeAdjacencyRules([], adjacencyRules),
+  }
+}
+
+function extractModelPayload(text: string): GeminiParseResult {
   const trimmed = text.trim()
   try {
     const direct = aiParsedSchema.safeParse(JSON.parse(trimmed))
-    if (direct.success) return direct.data
+    if (direct.success) return { parsed: direct.data, strictModel: null }
+  } catch {
+    // Continue to fallback extraction below.
+  }
+
+  try {
+    const strictDirect = strictModelSchema.safeParse(JSON.parse(trimmed))
+    if (strictDirect.success) {
+      return { parsed: toAiParsedFromStrict(strictDirect.data), strictModel: strictDirect.data }
+    }
   } catch {
     // Continue to fallback extraction below.
   }
 
   const jsonMatch = trimmed.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) return null
+  if (!jsonMatch) return { parsed: null, strictModel: null }
   try {
     const parsed = aiParsedSchema.safeParse(JSON.parse(jsonMatch[0]))
-    return parsed.success ? parsed.data : null
+    if (parsed.success) return { parsed: parsed.data, strictModel: null }
+    const strictParsed = strictModelSchema.safeParse(JSON.parse(jsonMatch[0]))
+    if (strictParsed.success) {
+      return { parsed: toAiParsedFromStrict(strictParsed.data), strictModel: strictParsed.data }
+    }
+    return { parsed: null, strictModel: null }
   } catch {
-    return null
+    return { parsed: null, strictModel: null }
   }
 }
 
 function buildModelPrompt(input: string) {
+  const dims = parseDimensionAreaFromPrompt(input)
+  const dimHint = dims ? `Detected dimensions hint: ${dims.breadthFt} x ${dims.lengthFt} ft (~${dims.totalSqFt} sqft).` : "No explicit dimensions detected."
   return [
-    "Parse this house requirement and return JSON only.",
-    "Allowed top-level keys:",
-    "totalSqFt, floors, bedrooms, kitchens, bathrooms, poojaRooms, storeRooms, verandahRooms, parkingSpaces, gardenAreas, balconyRooms, includeStairs, includeBoundary, includeLandscapeGlass, floorAssignments, lockedRooms, adjacencyRules, directionRules",
-    "floorAssignments must be an object with optional keys:",
-    "Living, Bedroom, Kitchen, Bathroom, Pooja, Store, Verandah, Parking, Garden, Balcony, Stairs",
-    "lockedRooms uses same object shape as floorAssignments for strict floor lock requests.",
-    "Each floorAssignments value must be an array of floor indexes (0-based, ground floor = 0).",
-    "adjacencyRules must be array of objects: { room, near } using allowed room keys.",
-    "directionRules must be array of objects: { room, direction } using direction in North/NorthEast/East/SouthEast/South/SouthWest/West/NorthWest/Center.",
+    "Return STRICT JSON only with this shape:",
+    "{",
+    '  "version": "1.0",',
+    '  "prompt_normalized": "string",',
+    '  "plot": { "length_ft": number|null, "breadth_ft": number|null, "area_sqft": number|null, "facing": "North"|"South"|"East"|"West"|null },',
+    '  "floors": number,',
+    '  "requirements": { "bedrooms": number, "kitchens": number, "bathrooms": number, "living": number, "pooja": number, "parking": number, "balcony": number },',
+    `  "constraints": { "outer_wall_ft": ${WALL_OUTER_FT}, "inner_wall_ft": ${WALL_INNER_FT}, "grid_step_ft": 0.5, "stairs_required": boolean },`,
+    '  "floor_preferences": [ { "room_type": "Living|Bedroom|Kitchen|Bathroom|Pooja|Store|Verandah|Parking|Garden|Balcony|Stairs", "floor": 0-3, "count": number } ],',
+    '  "validation": { "status": "pass|partial|needs_revision", "issues": [string], "warnings": [string] },',
+    '  "assumptions": [string],',
+    '  "adjacencyRules": [ { "room": "...", "near": "..." } ],',
+    '  "directionRules": [ { "room": "...", "direction": "North|NorthEast|East|SouthEast|South|SouthWest|West|NorthWest|Center" } ]',
+    "}",
+    dimHint,
     "Input may be Hindi, Hinglish, English, transliterated, or mixed.",
-    "Return compact JSON only. No markdown, no explanation.",
+    "Do not return markdown or explanation text.",
     `User input: ${input}`,
   ].join("\n")
 }
 
-async function parseWithGemini(input: string): Promise<AiParsed | null> {
+async function parseWithGemini(input: string): Promise<GeminiParseResult | null> {
   const { apiKey, textModel } = getGeminiConfig()
   if (!apiKey) return null
 
@@ -518,8 +793,13 @@ async function parseWithGemini(input: string): Promise<AiParsed | null> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        systemInstruction: { parts: [{ text: ARCHITECT_SYSTEM_INSTRUCTION }] },
         contents: [{ role: "user", parts: [{ text: buildModelPrompt(input) }] }],
-        generationConfig: { temperature: 0.1 },
+        generationConfig: {
+          temperature: 0,
+          responseMimeType: "application/json",
+          responseSchema: GEMINI_STRICT_RESPONSE_SCHEMA,
+        },
       }),
     })
     if (!response.ok) return null
@@ -533,9 +813,65 @@ async function parseWithGemini(input: string): Promise<AiParsed | null> {
     }
     const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") || ""
     if (!text) return null
-    return extractModelJson(text)
+    return extractModelPayload(text)
   } catch {
     return null
+  }
+}
+
+function inferFacingFromPrompt(input: string): "North" | "South" | "East" | "West" | null {
+  const normalized = normalizePromptInput(input)
+  if (/\bnorth\s*facing|facing\s*north|uttar/.test(normalized)) return "North"
+  if (/\bsouth\s*facing|facing\s*south|dakshin/.test(normalized)) return "South"
+  if (/\beast\s*facing|facing\s*east|purab|poorv|purva/.test(normalized)) return "East"
+  if (/\bwest\s*facing|facing\s*west|paschim/.test(normalized)) return "West"
+  return null
+}
+
+function buildArchitectPayload(args: {
+  input: string
+  strictModel: StrictModelParsed | null
+  requirements: RequirementsPatch
+  floorAssignments: FloorAssignments
+  adjacencyRules: AdjacencyRule[]
+  directionRules: DirectionRule[]
+}) {
+  const dimHint = parseDimensionAreaFromPrompt(args.input)
+  const strictPlot = args.strictModel?.plot
+  const lengthFt = strictPlot?.length_ft ?? dimHint?.lengthFt ?? null
+  const breadthFt = strictPlot?.breadth_ft ?? dimHint?.breadthFt ?? null
+  const areaSqFt =
+    strictPlot?.area_sqft ??
+    (lengthFt && breadthFt ? Math.round(lengthFt * breadthFt) : args.requirements.totalSqFt ?? null)
+  const facing = strictPlot?.facing ?? inferFacingFromPrompt(args.input)
+  const strictValidation = args.strictModel?.validation
+  const assumptions = [...(args.strictModel?.assumptions ?? [])]
+  if (!facing) assumptions.push("Plot facing inferred as default at visualization stage.")
+  if (!lengthFt || !breadthFt) assumptions.push("Plot dimensions inferred from area and requirements.")
+
+  return {
+    schemaVersion: "1.1",
+    plot: {
+      lengthFt,
+      breadthFt,
+      areaSqFt,
+      facing,
+    },
+    constraints: {
+      outerWallFt: WALL_OUTER_FT,
+      innerWallFt: WALL_INNER_FT,
+      gridStepFt: 0.5,
+      stairsRequired: args.requirements.includeStairs ?? (args.requirements.floors ?? 1) > 1,
+    },
+    validation: {
+      status: strictValidation?.status ?? "pass",
+      issues: strictValidation?.issues ?? [],
+      warnings: strictValidation?.warnings ?? [],
+    },
+    floorAssignments: args.floorAssignments,
+    adjacencyRules: args.adjacencyRules,
+    directionRules: args.directionRules,
+    assumptions: Array.from(new Set(assumptions)).slice(0, 20),
   }
 }
 
@@ -580,21 +916,42 @@ export async function POST(request: Request) {
     const fallbackAdjacencyRules = parseAdjacencyRulesFallback(input)
     const fallbackDirectionRules = parseDirectionRulesFallback(input)
 
-    const geminiParsed = await parseWithGemini(input)
-    const aiParsed = geminiParsed
+    const geminiResult = await parseWithGemini(input)
+    const aiParsed = geminiResult?.parsed ?? null
+    const strictModel = geminiResult?.strictModel ?? null
 
-    const mergedRequirements = requirementsSchema.parse({
+    const mergedRequirementsBase = requirementsSchema.parse({
       ...fallbackRequirements,
       ...(aiParsed || {}),
     })
-    const mergedFloorAssignments = mergeFloorAssignments(fallbackFloorAssignments, aiParsed?.floorAssignments)
-    const mergedLockedRooms = mergeFloorAssignments(
+    const mergedFloorAssignmentsBase = mergeFloorAssignments(fallbackFloorAssignments, aiParsed?.floorAssignments)
+    const mergedLockedRoomsBase = mergeFloorAssignments(
       fallbackLockedRooms,
       aiParsed?.lockedRooms ?? aiParsed?.floorAssignments,
     )
-    const mergedAdjacencyRules = mergeAdjacencyRules(fallbackAdjacencyRules, aiParsed?.adjacencyRules)
+    const mergedAdjacencyRulesBase = mergeAdjacencyRules(fallbackAdjacencyRules, aiParsed?.adjacencyRules)
     const mergedDirectionRules = mergeDirectionRules(fallbackDirectionRules, aiParsed?.directionRules)
-    const source: "gemini" | "fallback" = geminiParsed ? "gemini" : "fallback"
+    const strictMerge = enforceArchitecturalHardRules({
+      requirements: mergedRequirementsBase,
+      floorAssignments: mergedFloorAssignmentsBase,
+      lockedRooms: mergedLockedRoomsBase,
+      adjacencyRules: mergedAdjacencyRulesBase,
+    })
+    const mergedRequirements = strictMerge.requirements
+    const mergedFloorAssignments = strictMerge.floorAssignments
+    const mergedLockedRooms = strictMerge.lockedRooms
+    const mergedAdjacencyRules = strictMerge.adjacencyRules
+    const source: "gemini" | "fallback" = geminiResult?.parsed ? "gemini" : "fallback"
+    const validationStatus = strictModel?.validation?.status ?? "pass"
+    const strictAccepted = validationStatus !== "needs_revision"
+    const architectPayload = buildArchitectPayload({
+      input,
+      strictModel,
+      requirements: mergedRequirements,
+      floorAssignments: mergedFloorAssignments,
+      adjacencyRules: mergedAdjacencyRules,
+      directionRules: mergedDirectionRules,
+    })
     const summaryParts = [
       `${mergedRequirements.bedrooms ?? "?"} bed`,
       `${mergedRequirements.kitchens ?? "?"} kitchen`,
@@ -609,10 +966,11 @@ export async function POST(request: Request) {
         lockedRooms: mergedLockedRooms,
         adjacencyRules: mergedAdjacencyRules,
         directionRules: mergedDirectionRules,
+        architectPayload,
         conflicts: [],
-        strictAccepted: true,
+        strictAccepted,
         source,
-        summary: `${source === "fallback" ? "Smart local parser applied" : "AI parser + local checks applied"}: ${summaryParts.join(", ")}.`,
+        summary: `${source === "fallback" ? "Smart local parser applied" : "AI parser + local checks applied"}: ${summaryParts.join(", ")}.${strictAccepted ? "" : " Needs revision flags were detected."}`,
       },
       { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } },
     )
@@ -620,3 +978,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Could not parse requirement" }, { status: 500 })
   }
 }
+

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Weather App using Async/Await</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: Arial, sans-serif;
+        background: linear-gradient(135deg, #90e0ef, #caf0f8);
+      }
+
+      .weather-box {
+        width: min(92vw, 360px);
+        background: #ffffff;
+        border-radius: 18px;
+        padding: 24px;
+        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.12);
+        text-align: center;
+      }
+
+      input,
+      button {
+        width: 100%;
+        padding: 12px;
+        margin-top: 12px;
+        border-radius: 10px;
+        font-size: 1rem;
+      }
+
+      input {
+        border: 1px solid #cbd5e1;
+      }
+
+      button {
+        border: none;
+        background: #0077b6;
+        color: #ffffff;
+        cursor: pointer;
+      }
+
+      #result {
+        margin-top: 20px;
+      }
+
+      .error {
+        color: #d90429;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="weather-box">
+      <h2>Weather App</h2>
+      <input type="text" id="city" placeholder="Enter city name" />
+      <button onclick="getWeather()">Get Weather</button>
+      <div id="result"></div>
+    </div>
+
+    <script>
+      function getWeatherLabel(code) {
+        const weatherMap = {
+          0: "Clear sky",
+          1: "Mostly clear",
+          2: "Partly cloudy",
+          3: "Cloudy",
+          45: "Fog",
+          48: "Depositing rime fog",
+          51: "Light drizzle",
+          61: "Light rain",
+          63: "Moderate rain",
+          65: "Heavy rain",
+          71: "Light snow",
+          80: "Rain showers",
+          95: "Thunderstorm",
+        };
+
+        return weatherMap[code] || "Weather data available";
+      }
+
+      async function getWeather() {
+        const city = document.getElementById("city").value.trim();
+        const result = document.getElementById("result");
+
+        if (!city) {
+          result.innerHTML = "<p class='error'>Please enter a city name.</p>";
+          return;
+        }
+
+        try {
+          result.innerHTML = "<p>Loading weather details...</p>";
+
+          const geoResponse = await fetch(
+            `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
+              city
+            )}&count=1`
+          );
+
+          if (!geoResponse.ok) {
+            throw new Error("Unable to fetch city details.");
+          }
+
+          const geoData = await geoResponse.json();
+
+          if (!geoData.results || geoData.results.length === 0) {
+            throw new Error("City not found.");
+          }
+
+          const location = geoData.results[0];
+
+          const weatherResponse = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${location.latitude}&longitude=${location.longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code`
+          );
+
+          if (!weatherResponse.ok) {
+            throw new Error("Unable to fetch weather details.");
+          }
+
+          const weatherData = await weatherResponse.json();
+          const current = weatherData.current;
+
+          result.innerHTML = `
+            <h3>${location.name}, ${location.country}</h3>
+            <p><strong>Temperature:</strong> ${current.temperature_2m} ${weatherData.current_units.temperature_2m}</p>
+            <p><strong>Condition:</strong> ${getWeatherLabel(current.weather_code)}</p>
+            <p><strong>Humidity:</strong> ${current.relative_humidity_2m}${weatherData.current_units.relative_humidity_2m}</p>
+            <p><strong>Wind Speed:</strong> ${current.wind_speed_10m} ${weatherData.current_units.wind_speed_10m}</p>
+          `;
+        } catch (error) {
+          result.innerHTML = `<p class="error">${error.message}</p>`;
+        }
+      }
+    </script>
+  </body>
+</html>

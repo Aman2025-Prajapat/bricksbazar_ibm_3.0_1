@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Management - Assignment 2</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background: #f5f5f5;
+        }
+        
+        pre {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        button {
+            padding: 10px 20px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>2. Object-Based Student Management</h1>
+    <button onclick="calculateStudentGrade()">Calculate Grade</button>
+    <pre id="output"></pre>
+
+    <script>
+        function calculateStudentGrade() {
+            let student = {
+                name: "Rohit",
+                rollNumber: 101,
+                marks: {
+                    subject1: 85,
+                    subject2: 78,
+                    subject3: 92
+                }
+            };
+
+            let total = student.marks.subject1 + student.marks.subject2 + student.marks.subject3;
+            let average = total / 3;
+
+            let grade;
+            if (average >= 90) {
+                grade = "A+";
+            } else if (average >= 80) {
+                grade = "A";
+            } else if (average >= 70) {
+                grade = "B";
+            } else if (average >= 60) {
+                grade = "C";
+            } else if (average >= 50) {
+                grade = "D";
+            } else {
+                grade = "Fail";
+            }
+
+            document.getElementById('output').textContent =
+                `Student Name: ${student.name}\n` +
+                `Roll Number: ${student.rollNumber}\n` +
+                `Marks: ${JSON.stringify(student.marks, null, 2)}\n` +
+                `Total Marks: ${total}\n` +
+                `Average Marks: ${average.toFixed(2)}\n` +
+                `Grade: ${grade}`;
+        }
+    </script>
+</body>
+
+</html>

@@ -40,7 +40,7 @@ export default function DistributorProductsPage() {
 
     const loadProducts = async () => {
       try {
-        const response = await fetch("/api/products", { credentials: "include" })
+        const response = await fetch("/api/products?scope=self", { credentials: "include" })
         const payload = (await response.json()) as { products?: ApiProduct[]; error?: string }
         if (!response.ok || !payload.products) {
           throw new Error(payload.error || "Could not load products")

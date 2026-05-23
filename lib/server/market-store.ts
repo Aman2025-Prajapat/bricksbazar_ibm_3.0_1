@@ -1,3 +1,4 @@
+import bcrypt from "bcryptjs"
 import { prisma } from "@/lib/server/prisma"
 
 export type ProductStatus = "active" | "out_of_stock"
@@ -402,6 +403,236 @@ type DeliveryProofRow = {
 
 let marketTablesReady = false
 
+const marketplaceSeedOperators = {
+  defaultDistributor: {
+    legacyId: "mp-distributor-ops",
+    email: "mp-logistics-dispatch@marketplace.brickbazar.local",
+    name: "MP Logistics Dispatch",
+    role: "distributor" as const,
+  },
+  sellers: [
+    {
+      legacyId: "seed-mp-seller-1",
+      email: "bhopal-brick-and-blocks@marketplace.brickbazar.local",
+      name: "Bhopal Brick and Blocks",
+    },
+    {
+      legacyId: "seed-mp-seller-2",
+      email: "indore-brick-udyog@marketplace.brickbazar.local",
+      name: "Indore Brick Udyog",
+    },
+    {
+      legacyId: "seed-mp-seller-3",
+      email: "satpura-cement-depot@marketplace.brickbazar.local",
+      name: "Satpura Cement Depot",
+    },
+    {
+      legacyId: "seed-mp-seller-4",
+      email: "narmada-cement-traders@marketplace.brickbazar.local",
+      name: "Narmada Cement Traders",
+    },
+    {
+      legacyId: "seed-mp-seller-5",
+      email: "malwa-steel-hub@marketplace.brickbazar.local",
+      name: "Malwa Steel Hub",
+    },
+    {
+      legacyId: "seed-mp-seller-6",
+      email: "bhopal-steel-syndicate@marketplace.brickbazar.local",
+      name: "Bhopal Steel Syndicate",
+    },
+    {
+      legacyId: "seed-mp-seller-7",
+      email: "narmada-sand-and-aggregates@marketplace.brickbazar.local",
+      name: "Narmada Sand and Aggregates",
+    },
+    {
+      legacyId: "seed-mp-seller-8",
+      email: "rewa-aggregates-and-stone@marketplace.brickbazar.local",
+      name: "Rewa Aggregates and Stone",
+    },
+    {
+      legacyId: "seed-mp-seller-9",
+      email: "bhopal-readymix-concrete@marketplace.brickbazar.local",
+      name: "Bhopal ReadyMix Concrete",
+    },
+    {
+      legacyId: "seed-mp-seller-10",
+      email: "ujjain-blocks-and-pavers@marketplace.brickbazar.local",
+      name: "Ujjain Blocks and Pavers",
+    },
+  ],
+}
+
+const marketplaceSeedOperatorState = {
+  distributorId: marketplaceSeedOperators.defaultDistributor.legacyId,
+  distributorName: marketplaceSeedOperators.defaultDistributor.name,
+  sellerIdByName: new Map<string, string>(),
+}
+
+function getMarketplaceSeedSellerId(name: string, fallbackId: string) {
+  return marketplaceSeedOperatorState.sellerIdByName.get(name) || fallbackId
+}
+
+async function ensureMarketplaceSeedOperatorAccount(input: {
+  email: string
+  name: string
+  role: "seller" | "distributor"
+}) {
+  const existingNamedUser = await prisma.user.findFirst({
+    where: {
+      name: input.name,
+      role: input.role,
+      verified: true,
+    },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  })
+  if (existingNamedUser) {
+    return existingNamedUser.id
+  }
+
+  const existingUser = await prisma.user.findUnique({
+    where: { email: input.email },
+    select: { id: true },
+  })
+  if (existingUser) {
+    await prisma.user.update({
+      where: { email: input.email },
+      data: {
+        name: input.name,
+        role: input.role,
+        verified: true,
+      },
+    })
+    return existingUser.id
+  }
+
+  const passwordHash = await bcrypt.hash(crypto.randomUUID(), 12)
+  const created = await prisma.user.create({
+    data: {
+      email: input.email,
+      name: input.name,
+      role: input.role,
+      verified: true,
+      avatar: null,
+      passwordHash,
+    },
+    select: { id: true },
+  })
+  return created.id
+}
+
+async function syncMarketplaceSeedOperators(now: string) {
+  const sellerIdByName = new Map<string, string>()
+  const sellerIdByLegacyId = new Map<string, string>()
+  const sellerNameByLegacyId = new Map<string, string>()
+
+  for (const seller of marketplaceSeedOperators.sellers) {
+    const sellerId = await ensureMarketplaceSeedOperatorAccount({
+      email: seller.email,
+      name: seller.name,
+      role: "seller",
+    })
+    sellerIdByName.set(seller.name, sellerId)
+    sellerIdByLegacyId.set(seller.legacyId, sellerId)
+    sellerNameByLegacyId.set(seller.legacyId, seller.name)
+  }
+
+  const distributorId = await ensureMarketplaceSeedOperatorAccount({
+    email: marketplaceSeedOperators.defaultDistributor.email,
+    name: marketplaceSeedOperators.defaultDistributor.name,
+    role: "distributor",
+  })
+
+  marketplaceSeedOperatorState.sellerIdByName = sellerIdByName
+  marketplaceSeedOperatorState.distributorId = distributorId
+  marketplaceSeedOperatorState.distributorName = marketplaceSeedOperators.defaultDistributor.name
+
+  for (const seller of marketplaceSeedOperators.sellers) {
+    const resolvedSellerId = sellerIdByLegacyId.get(seller.legacyId)
+    if (!resolvedSellerId) continue
+
+    await prisma.$executeRawUnsafe(
+      "UPDATE market_products SET seller_id = ?, seller_name = ?, updated_at = ? WHERE seller_id = ?",
+      resolvedSellerId,
+      seller.name,
+      now,
+      seller.legacyId,
+    )
+    await prisma.$executeRawUnsafe(
+      "UPDATE market_orders SET seller_id = ?, seller_name = ? WHERE seller_id = ?",
+      resolvedSellerId,
+      seller.name,
+      seller.legacyId,
+    )
+    await prisma.$executeRawUnsafe(
+      "UPDATE market_order_shipments SET seller_id = ?, seller_name = ?, updated_at = ? WHERE seller_id = ?",
+      resolvedSellerId,
+      seller.name,
+      now,
+      seller.legacyId,
+    )
+    await prisma.$executeRawUnsafe(
+      "UPDATE market_deliveries SET seller_id = ?, seller_name = ?, updated_at = ? WHERE seller_id = ?",
+      resolvedSellerId,
+      seller.name,
+      now,
+      seller.legacyId,
+    )
+  }
+
+  const legacyOrders = await prisma.$queryRawUnsafe<Array<{ id: string; items_json: string }>>(
+    "SELECT id, items_json FROM market_orders",
+  )
+  for (const order of legacyOrders) {
+    const nextItems = (JSON.parse(order.items_json) as OrderItem[]).map((item) => {
+      const nextSellerId = sellerIdByLegacyId.get(item.sellerId)
+      const nextSellerName = sellerNameByLegacyId.get(item.sellerId)
+      if (!nextSellerId || !nextSellerName) {
+        return item
+      }
+
+      return {
+        ...item,
+        sellerId: nextSellerId,
+        sellerName: nextSellerName,
+      }
+    })
+
+    if (JSON.stringify(nextItems) === order.items_json) {
+      continue
+    }
+
+    await prisma.$executeRawUnsafe(
+      "UPDATE market_orders SET items_json = ? WHERE id = ?",
+      JSON.stringify(nextItems),
+      order.id,
+    )
+  }
+
+  await prisma.$executeRawUnsafe(
+    `UPDATE market_deliveries
+     SET distributor_id = ?, distributor_name = ?, updated_at = ?
+     WHERE distributor_id = ?`,
+    distributorId,
+    marketplaceSeedOperators.defaultDistributor.name,
+    now,
+    marketplaceSeedOperators.defaultDistributor.legacyId,
+  )
+}
+
+export async function getMarketplaceDefaultDistributorId() {
+  const distributorId = await ensureMarketplaceSeedOperatorAccount({
+    email: marketplaceSeedOperators.defaultDistributor.email,
+    name: marketplaceSeedOperators.defaultDistributor.name,
+    role: "distributor",
+  })
+  marketplaceSeedOperatorState.distributorId = distributorId
+  marketplaceSeedOperatorState.distributorName = marketplaceSeedOperators.defaultDistributor.name
+  return distributorId
+}
+
 function isPostgresRuntime() {
   const url = process.env.DATABASE_URL ?? ""
   return /^(postgres|postgresql|prisma\+postgres):\/\//i.test(url.trim())
@@ -712,8 +943,8 @@ function buildDefaultDeliveryFromOrder(
     mpSellerPickupAddressByName[order.sellerName] || `${order.sellerName}, Industrial Hub, Madhya Pradesh`
   const deliveryZone = mpBuyerDeliveryZones[stableIndex(`${order.id}-${order.buyerName}`, mpBuyerDeliveryZones.length)]
   const finalDeliveryAddress = options?.deliveryAddress?.trim() || `${order.buyerName}, ${deliveryZone}`
-  const finalDistributorId = options?.distributorId?.trim() || "mp-distributor-ops"
-  const finalDistributorName = options?.distributorName?.trim() || "MP Logistics Dispatch"
+  const finalDistributorId = options?.distributorId?.trim() || marketplaceSeedOperatorState.distributorId
+  const finalDistributorName = options?.distributorName?.trim() || marketplaceSeedOperatorState.distributorName
   const finalVehicleType = options?.vehicleType?.trim() || "Truck"
 
   return {
@@ -755,7 +986,7 @@ function getSeedProducts(now: string) {
       status: "active" as const,
       rating: 4.8,
       image: "/placeholder.svg?key=mp-brick-1",
-      sellerId: "seed-mp-seller-1",
+      sellerId: getMarketplaceSeedSellerId("Bhopal Brick and Blocks", "seed-mp-seller-1"),
       sellerName: "Bhopal Brick and Blocks",
       createdAt: now,
       updatedAt: now,
@@ -771,7 +1002,7 @@ function getSeedProducts(now: string) {
       status: "active" as const,
       rating: 4.7,
       image: "/placeholder.svg?key=mp-brick-2",
-      sellerId: "seed-mp-seller-2",
+      sellerId: getMarketplaceSeedSellerId("Indore Brick Udyog", "seed-mp-seller-2"),
       sellerName: "Indore Brick Udyog",
       createdAt: now,
       updatedAt: now,
@@ -787,7 +1018,7 @@ function getSeedProducts(now: string) {
       status: "active" as const,
       rating: 4.9,
       image: "/placeholder.svg?key=mp-cement-1",
-      sellerId: "seed-mp-seller-3",
+      sellerId: getMarketplaceSeedSellerId("Satpura Cement Depot", "seed-mp-seller-3"),
       sellerName: "Satpura Cement Depot",
       createdAt: now,
       updatedAt: now,
@@ -803,7 +1034,7 @@ function getSeedProducts(now: string) {
       status: "active" as const,
       rating: 4.6,
       image: "/placeholder.svg?key=mp-cement-2",
-      sellerId: "seed-mp-seller-4",
+      sellerId: getMarketplaceSeedSellerId("Narmada Cement Traders", "seed-mp-seller-4"),
       sellerName: "Narmada Cement Traders",
       createdAt: now,
       updatedAt: now,
@@ -819,7 +1050,7 @@ function getSeedProducts(now: string) {
       status: "active" as const,
       rating: 4.8,
       image: "/placeholder.svg?key=mp-steel-1",
-      sellerId: "seed-mp-seller-5",
+      sellerId: getMarketplaceSeedSellerId("Malwa Steel Hub", "seed-mp-seller-5"),
       sellerName: "Malwa Steel Hub",
       createdAt: now,
       updatedAt: now,
@@ -835,7 +1066,7 @@ function getSeedProducts(now: string) {
       status: "active" as const,
       rating: 4.7,
       image: "/placeholder.svg?key=mp-steel-2",
-      sellerId: "seed-mp-seller-6",
+      sellerId: getMarketplaceSeedSellerId("Bhopal Steel Syndicate", "seed-mp-seller-6"),
       sellerName: "Bhopal Steel Syndicate",
       createdAt: now,
       updatedAt: now,
@@ -851,7 +1082,7 @@ function getSeedProducts(now: string) {
       status: "active" as const,
       rating: 4.5,
       image: "/placeholder.svg?key=mp-sand-1",
-      sellerId: "seed-mp-seller-7",
+      sellerId: getMarketplaceSeedSellerId("Narmada Sand and Aggregates", "seed-mp-seller-7"),
       sellerName: "Narmada Sand and Aggregates",
       createdAt: now,
       updatedAt: now,
@@ -867,7 +1098,7 @@ function getSeedProducts(now: string) {
       status: "active" as const,
       rating: 4.4,
       image: "/placeholder.svg?key=mp-aggregate-1",
-      sellerId: "seed-mp-seller-8",
+      sellerId: getMarketplaceSeedSellerId("Rewa Aggregates and Stone", "seed-mp-seller-8"),
       sellerName: "Rewa Aggregates and Stone",
       createdAt: now,
       updatedAt: now,
@@ -883,7 +1114,7 @@ function getSeedProducts(now: string) {
       status: "active" as const,
       rating: 4.6,
       image: "/placeholder.svg?key=mp-rmc-1",
-      sellerId: "seed-mp-seller-9",
+      sellerId: getMarketplaceSeedSellerId("Bhopal ReadyMix Concrete", "seed-mp-seller-9"),
       sellerName: "Bhopal ReadyMix Concrete",
       createdAt: now,
       updatedAt: now,
@@ -899,7 +1130,7 @@ function getSeedProducts(now: string) {
       status: "active" as const,
       rating: 4.5,
       image: "/placeholder.svg?key=mp-paver-1",
-      sellerId: "seed-mp-seller-10",
+      sellerId: getMarketplaceSeedSellerId("Ujjain Blocks and Pavers", "seed-mp-seller-10"),
       sellerName: "Ujjain Blocks and Pavers",
       createdAt: now,
       updatedAt: now,
@@ -1199,12 +1430,17 @@ async function ensureMarketTables() {
   )
 
   const now = new Date().toISOString()
+  await syncMarketplaceSeedOperators(now)
   for (const product of getSeedProducts(now)) {
     await prisma.$executeRawUnsafe(
       `INSERT INTO market_products
        (id, name, category, price, unit, stock, min_stock, min_order_qty, max_order_qty, bulk_only, operator_role, status, rating, image, seller_id, seller_name, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (id) DO NOTHING`,
+       ON CONFLICT (id) DO UPDATE SET
+         seller_id = excluded.seller_id,
+         seller_name = excluded.seller_name,
+         operator_role = excluded.operator_role,
+         updated_at = excluded.updated_at`,
       product.id,
       product.name,
       product.category,

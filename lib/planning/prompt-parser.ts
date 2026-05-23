@@ -48,6 +48,7 @@ const ROOM_KEYWORDS: Array<{ type: PlanningRoomType; patterns: string[] }> = [
 export function normalizePlanningPrompt(input: string) {
   const normalized = input
     .toLowerCase()
+    .replace(/[\u00d7]/g, "x")
     .replace(/[,;|+]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
@@ -59,7 +60,9 @@ export function normalizePlanningPrompt(input: string) {
 
 export function extractDimensionAreaFromPrompt(input: string): PromptDimensionArea | null {
   const normalized = normalizePlanningPrompt(input)
-  const match = normalized.match(/(\d{2,3}(?:\.\d+)?)\s*(?:x|by)\s*(\d{2,3}(?:\.\d+)?)(?:\s*(?:ft|feet|foot|'))?\b/i)
+  const match = normalized.match(
+    /(\d{2,3}(?:\.\d+)?)\s*(?:ft|feet|foot|')?\s*(?:x|\u00d7|\*|by)\s*(\d{2,3}(?:\.\d+)?)(?:\s*(?:ft|feet|foot|'))?\b/i,
+  )
   if (!match?.[1] || !match[2]) return null
   const lengthFt = Number.parseFloat(match[1])
   const breadthFt = Number.parseFloat(match[2])
@@ -101,3 +104,4 @@ export function parsePromptRoomCounts(input: string): Partial<Record<PlanningRoo
   }
   return counts
 }
+

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Array Operations - Assignment 1</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background: #f5f5f5;
+        }
+        
+        pre {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>1. Array Operations Program</h1>
+    <button onclick="runArrayOps()">Run Operations</button>
+    <pre id="output"></pre>
+
+    <script>
+        function runArrayOps() {
+            let numbers = [23, 67, 45, 89, 12, 56, 78, 34, 91, 50];
+            let max = numbers[0];
+            for (let i = 1; i < numbers.length; i++) {
+                if (numbers[i] > max) {
+                    max = numbers[i];
+                }
+            }
+            let min = numbers[0];
+            for (let i = 1; i < numbers.length; i++) {
+                if (numbers[i] < min) {
+                    min = numbers[i];
+                }
+            }
+
+            let sum = 0;
+            for (let i = 0; i < numbers.length; i++) {
+                sum += numbers[i];
+            }
+            let average = sum / numbers.length;
+
+            let greaterThan50 = '';
+            for (let i = 0; i < numbers.length; i++) {
+                if (numbers[i] > 50) {
+                    greaterThan50 += numbers[i] + '\n';
+                }
+            }
+
+            document.getElementById('output').textContent =
+                `Numbers in array: ${numbers.join(', ')}\n` +
+                `Maximum number: ${max}\n` +
+                `Minimum number: ${min}\n` +
+                `Average: ${average.toFixed(2)}\n\n` +
+                `Numbers greater than 50:\n${greaterThan50}`;
+        }
+    </script>
+</body>
+
+</html>

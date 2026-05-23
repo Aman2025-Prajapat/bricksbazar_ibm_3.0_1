@@ -1,7 +1,34 @@
 import bcrypt from "bcryptjs"
 import { PrismaClient } from "@prisma/client"
+import fs from "node:fs"
+import path from "node:path"
 
 const prisma = new PrismaClient()
+
+function loadDotEnvIfNeeded() {
+  if (process.env.ADMIN_EMAIL || process.env.ADMIN_PASSWORD) return
+  const envPath = path.join(process.cwd(), ".env")
+  if (!fs.existsSync(envPath)) return
+  const raw = fs.readFileSync(envPath, "utf-8")
+  raw.split(/\r?\n/).forEach((line) => {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#")) return
+    const idx = trimmed.indexOf("=")
+    if (idx <= 0) return
+    const key = trimmed.slice(0, idx).trim()
+    const valueRaw = trimmed.slice(idx + 1).trim()
+    const unquoted =
+      (valueRaw.startsWith("\"") && valueRaw.endsWith("\"")) ||
+      (valueRaw.startsWith("'") && valueRaw.endsWith("'"))
+        ? valueRaw.slice(1, -1)
+        : valueRaw
+    if (!process.env[key]) {
+      process.env[key] = unquoted
+    }
+  })
+}
+
+loadDotEnvIfNeeded()
 
 function normalizeEmail(value) {
   return String(value || "")
@@ -19,7 +46,7 @@ function isStrongPassword(password) {
 }
 
 async function main() {
-  const email = normalizeEmail(process.env.ADMIN_EMAIL || "admin@bricksbazar.com")
+  const email = normalizeEmail(process.env.ADMIN_EMAIL || "")
   const name = String(process.env.ADMIN_NAME || "Admin").trim() || "Admin"
   const password = String(process.env.ADMIN_PASSWORD || "")
 

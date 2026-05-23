@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dynamic Color Changer</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #1d3557, #457b9d);
+        color: #ffffff;
+        transition: background 0.5s ease;
+      }
+
+      .card {
+        width: min(90vw, 420px);
+        padding: 32px 24px;
+        border-radius: 20px;
+        text-align: center;
+        background: rgba(255, 255, 255, 0.12);
+        backdrop-filter: blur(8px);
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: 2rem;
+      }
+
+      p {
+        margin: 0 0 20px;
+        font-size: 1rem;
+      }
+
+      button {
+        border: none;
+        border-radius: 999px;
+        padding: 12px 24px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        background: #ffffff;
+        color: #1d3557;
+      }
+
+      #colorCode {
+        margin-top: 18px;
+        font-size: 1.1rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Dynamic Color Changer</h1>
+      <p>Click the button to generate a fresh background gradient.</p>
+      <button onclick="changeBackground()">Change Background</button>
+      <div id="colorCode">#1D3557 to #457B9D</div>
+    </div>
+
+    <script>
+      function randomHex() {
+        const value = Math.floor(Math.random() * 16777215).toString(16);
+        return `#${value.padStart(6, "0").toUpperCase()}`;
+      }
+
+      function changeBackground() {
+        const colorOne = randomHex();
+        const colorTwo = randomHex();
+        document.body.style.background = `linear-gradient(135deg, ${colorOne}, ${colorTwo})`;
+        document.getElementById(
+          "colorCode"
+        ).textContent = `${colorOne} to ${colorTwo}`;
+      }
+    </script>
+  </body>
+</html>

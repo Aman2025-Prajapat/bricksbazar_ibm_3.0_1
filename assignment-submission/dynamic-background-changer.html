@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Background Color Changer - Assignment 3</title>
+    <style>
+        body {
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            font-family: Arial, sans-serif;
+            transition: background-color 0.5s ease;
+        }
+        
+        h1 {
+            color: white;
+            text-shadow: 2px 2px 5px black;
+        }
+        
+        button {
+            padding: 12px 24px;
+            font-size: 18px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            background-color: black;
+            color: white;
+            transition: 0.3s;
+        }
+        
+        button:hover {
+            background-color: #333;
+        }
+        
+        #colorCode {
+            margin-top: 20px;
+            font-size: 22px;
+            color: white;
+            font-weight: bold;
+            text-shadow: 2px 2px 5px black;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Dynamic Background Color Changer</h1>
+    <button onclick="changeBackgroundColor()">Change Color</button>
+    <p id="colorCode">RGB(255, 255, 255)</p>
+
+    <script>
+        function getRandomValue() {
+            return Math.floor(Math.random() * 256);
+        }
+
+        function changeBackgroundColor() {
+            let r = getRandomValue();
+            let g = getRandomValue();
+            let b = getRandomValue();
+
+            let randomColor = `rgb(${r}, ${g}, ${b})`;
+
+            document.body.style.backgroundColor = randomColor;
+            document.getElementById("colorCode").innerText = randomColor.toUpperCase();
+        }
+    </script>
+</body>
+
+</html>

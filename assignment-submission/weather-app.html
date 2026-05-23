@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather App - Assignment 5</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: lightblue;
+            text-align: center;
+            padding-top: 100px;
+        }
+        
+        .box {
+            background: white;
+            padding: 20px;
+            width: 300px;
+            margin: auto;
+            border-radius: 10px;
+            box-shadow: 0px 0px 10px gray;
+        }
+        
+        input,
+        button {
+            padding: 10px;
+            margin: 10px;
+            width: 80%;
+        }
+        
+        #result {
+            margin-top: 20px;
+        }
+        
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="box">
+        <h2>Weather App (Async/Await)</h2>
+        <input type="text" id="city" placeholder="Enter city name (e.g., Delhi)">
+        <button onclick="getWeather()">Get Weather</button>
+        <div id="result"></div>
+        <p style="font-size: 12px; color: #666; margin-top: 20px;">
+            Note: Get free API key from <a href="https://openweathermap.org/api" target="_blank">openweathermap.org</a> and replace in console.
+        </p>
+    </div>
+
+    <script>
+        async function getWeather() {
+            const city = document.getElementById("city").value.trim();
+            const result = document.getElementById("result");
+
+            if (city === "") {
+                result.innerHTML = "<p class='error'>Please enter a city name</p>";
+                return;
+            }
+
+            // Replace with your OpenWeatherMap API key
+            const apiKey = "YOUR_API_KEY_HERE"; // e.g., "ad65cd32674c0132099c4f6828f983a3"
+            const url = `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${apiKey}&units=metric`;
+
+            if (apiKey === "YOUR_API_KEY_HERE") {
+                result.innerHTML = "<p class='error'>Please replace API key in browser console or source code.</p>";
+                console.log("To use: Open browser console, set apiKey = 'your_key';");
+                return;
+            }
+
+            try {
+                result.innerHTML = "<p>Loading...</p>";
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.cod !== 200) {
+                    throw new Error(data.message || "City not found");
+                }
+
+                result.innerHTML = `
+                    <h3>${data.name}</h3>
+                    <p><strong>Temperature:</strong> ${data.main.temp} °C</p>
+                    <p><strong>Condition:</strong> ${data.weather[0].main}</p>
+                    <p><strong>Humidity:</strong> ${data.main.humidity}%</p>
+                `;
+            } catch (error) {
+                result.innerHTML = `<p class="error">${error.message}</p>`;
+            }
+        }
+    </script>
+
+</body>
+
+</html>

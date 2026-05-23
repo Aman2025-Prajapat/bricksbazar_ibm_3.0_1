@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fetch API Users - Assignment 4</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        
+        #userContainer {
+            max-width: 700px;
+            margin: 20px auto;
+        }
+        
+        .user-card {
+            background: white;
+            padding: 15px;
+            margin-bottom: 12px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .user-card h3 {
+            margin: 0 0 8px;
+            color: #0077cc;
+        }
+        
+        .user-card p {
+            margin: 5px 0;
+            color: #555;
+        }
+        
+        .error {
+            color: red;
+            text-align: center;
+            font-weight: bold;
+        }
+        
+        .loading {
+            text-align: center;
+            font-size: 18px;
+            color: #666;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>User Data using Fetch API</h1>
+    <div id="userContainer">
+        <p class="loading">Loading users...</p>
+    </div>
+
+    <script>
+        const userContainer = document.getElementById("userContainer");
+
+        fetch("https://jsonplaceholder.typicode.com/users")
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error("Failed to fetch data");
+                }
+                return response.json();
+            })
+            .then(users => {
+                userContainer.innerHTML = "";
+
+                users.forEach(user => {
+                    const userCard = document.createElement("div");
+                    userCard.classList.add("user-card");
+
+                    userCard.innerHTML = `
+<h3>${user.name}</h3>
+<p><strong>Email:</strong> ${user.email}</p>
+<p><strong>Phone:</strong> ${user.phone}</p>
+<p><strong>Company:</strong> ${user.company.name}</p>
+`;
+
+                    userContainer.appendChild(userCard);
+                });
+            })
+            .catch(error => {
+                userContainer.innerHTML = `<p class="error">${error.message}</p>`;
+            });
+    </script>
+
+</body>
+
+</html>

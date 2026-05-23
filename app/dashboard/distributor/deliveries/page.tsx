@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { OrderChatPanel } from "@/components/chat/order-chat-panel"
-import { Search, MapPin, Clock, Package, Phone, MessageSquare, Navigation, Loader2, LocateFixed, KeyRound, Copy } from "lucide-react"
+import { Search, MapPin, Clock, Package, Phone, MessageSquare, Navigation, Loader2, LocateFixed, KeyRound, Copy, Share2 } from "lucide-react"
 
 type DeliveryStatus = "pickup_ready" | "in_transit" | "nearby" | "delivered" | "cancelled"
 type DeliveryAlertSeverity = "info" | "warning" | "critical"
@@ -75,6 +75,12 @@ type DeliveryLocationDraft = {
 type DriverTokenData = {
   token: string
   expiresAt: string
+}
+
+type LivePingResult = {
+  lat: number
+  lng: number
+  address: string
 }
 
 function cleanPhoneForTel(value: string) {
@@ -145,6 +151,7 @@ export default function DeliveriesPage() {
   const [locationDraftByDeliveryId, setLocationDraftByDeliveryId] = useState<Record<string, DeliveryLocationDraft>>({})
   const [savingAssignmentDeliveryId, setSavingAssignmentDeliveryId] = useState<string | null>(null)
   const [generatingDriverTokenDeliveryId, setGeneratingDriverTokenDeliveryId] = useState<string | null>(null)
+  const [sharingLivePingDeliveryId, setSharingLivePingDeliveryId] = useState<string | null>(null)
   const [copiedDriverTokenDeliveryId, setCopiedDriverTokenDeliveryId] = useState<string | null>(null)
   const [driverTokenByDeliveryId, setDriverTokenByDeliveryId] = useState<Record<string, DriverTokenData>>({})
   const [uploadingPodDeliveryId, setUploadingPodDeliveryId] = useState<string | null>(null)
@@ -448,25 +455,28 @@ export default function DeliveriesPage() {
     }
   }
 
+  const requestDriverToken = async (delivery: DeliveryRecord): Promise<DriverTokenData> => {
+    const response = await fetch(`/api/deliveries/${delivery.id}/driver-token`, {
+      credentials: "include",
+      cache: "no-store",
+    })
+    const payload = (await response.json()) as { token?: string; expiresAt?: string; error?: string }
+    if (!response.ok || !payload.token || !payload.expiresAt) {
+      throw new Error(payload.error || "Could not generate driver tracking token")
+    }
+
+    const tokenData = { token: payload.token, expiresAt: payload.expiresAt }
+    setDriverTokenByDeliveryId((current) => ({ ...current, [delivery.id]: tokenData }))
+    setCopiedDriverTokenDeliveryId(null)
+    return tokenData
+  }
+
   const generateDriverToken = async (delivery: DeliveryRecord) => {
     setGeneratingDriverTokenDeliveryId(delivery.id)
     setActionMessage("")
     setError("")
     try {
-      const response = await fetch(`/api/deliveries/${delivery.id}/driver-token`, {
-        credentials: "include",
-        cache: "no-store",
-      })
-      const payload = (await response.json()) as { token?: string; expiresAt?: string; error?: string }
-      if (!response.ok || !payload.token || !payload.expiresAt) {
-        throw new Error(payload.error || "Could not generate driver tracking token")
-      }
-
-      setDriverTokenByDeliveryId((current) => ({
-        ...current,
-        [delivery.id]: { token: payload.token!, expiresAt: payload.expiresAt! },
-      }))
-      setCopiedDriverTokenDeliveryId(null)
+      await requestDriverToken(delivery)
       setActionMessage(`Driver token generated for ${delivery.orderNumber}.`)
     } catch (tokenError) {
       setError(tokenError instanceof Error ? tokenError.message : "Could not generate driver tracking token")
@@ -494,7 +504,10 @@ export default function DeliveriesPage() {
     }
   }
 
-  const pushLivePing = async (delivery: DeliveryRecord) => {
+  const pushLivePing = async (
+    delivery: DeliveryRecord,
+    options?: { suppressSuccessMessage?: boolean },
+  ): Promise<LivePingResult | null> => {
     const draft = locationDraftByDeliveryId[delivery.id] || defaultLocationDraft(delivery)
     const lat = Number.parseFloat(draft.lat)
     const lng = Number.parseFloat(draft.lng)
@@ -504,7 +517,7 @@ export default function DeliveriesPage() {
 
     if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) {
       setError("Enter valid latitude/longitude before sharing live ping")
-      return
+      return null
     }
 
     try {
@@ -525,10 +538,61 @@ export default function DeliveriesPage() {
       if (!response.ok) {
         throw new Error(payload.error || "Could not push location update")
       }
-      setActionMessage(`Live location ping saved for ${delivery.orderNumber}.`)
+      if (!options?.suppressSuccessMessage) {
+        setActionMessage(`Live location ping saved for ${delivery.orderNumber}.`)
+      }
       await loadDeliveries(true)
+      return { lat, lng, address }
     } catch (locationError) {
       setError(locationError instanceof Error ? locationError.message : "Could not push location update")
+      return null
+    }
+  }
+
+  const shareLivePingWithToken = async (delivery: DeliveryRecord) => {
+    setSharingLivePingDeliveryId(delivery.id)
+    setActionMessage("")
+    setError("")
+
+    try {
+      const pingResult = await pushLivePing(delivery, { suppressSuccessMessage: true })
+      if (!pingResult) {
+        return
+      }
+
+      const tokenData = driverTokenByDeliveryId[delivery.id] || (await requestDriverToken(delivery))
+      const mapUrl = `https://www.google.com/maps?q=${pingResult.lat},${pingResult.lng}`
+      const shareText = [
+        `BricksBazar Live Ping - ${delivery.orderNumber}`,
+        `Driver: ${delivery.driverName}`,
+        `Address: ${pingResult.address}`,
+        `Map: ${mapUrl}`,
+        `Tracking Token: ${tokenData.token}`,
+        `Token Valid Till: ${new Date(tokenData.expiresAt).toLocaleString()}`,
+      ].join("\n")
+
+      let shared = false
+      if (typeof navigator !== "undefined" && "share" in navigator) {
+        try {
+          await navigator.share({
+            title: `${delivery.orderNumber} Live Ping`,
+            text: shareText,
+          })
+          shared = true
+        } catch {
+          // Ignore and fallback to clipboard.
+        }
+      }
+
+      if (!shared) {
+        await navigator.clipboard.writeText(shareText)
+      }
+
+      setActionMessage(`Live ping + token shared for ${delivery.orderNumber}.`)
+    } catch (shareError) {
+      setError(shareError instanceof Error ? shareError.message : "Could not share live ping with token")
+    } finally {
+      setSharingLivePingDeliveryId(null)
     }
   }
 
@@ -665,6 +729,7 @@ export default function DeliveriesPage() {
             const isIssuingOtp = issuingOtpDeliveryId === delivery.id
             const isSavingAssignment = savingAssignmentDeliveryId === delivery.id
             const isGeneratingDriverToken = generatingDriverTokenDeliveryId === delivery.id
+            const isSharingLivePing = sharingLivePingDeliveryId === delivery.id
             const hasDeliveryEnded = delivery.status === "delivered" || delivery.status === "cancelled"
             const driverTokenState = driverTokenByDeliveryId[delivery.id]
             const alerts = alertsByDeliveryId[delivery.id] || []
@@ -974,6 +1039,18 @@ export default function DeliveriesPage() {
                     >
                       <LocateFixed className="h-4 w-4" />
                       Share Live Ping
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 bg-transparent"
+                      disabled={isSharingLivePing || hasDeliveryEnded || !assignmentReady}
+                      onClick={() => {
+                        void shareLivePingWithToken(delivery)
+                      }}
+                    >
+                      <Share2 className="h-4 w-4" />
+                      {isSharingLivePing ? "Sharing..." : "Share Ping + Token"}
                     </Button>
 
                     {delivery.status === "pickup_ready" ? (

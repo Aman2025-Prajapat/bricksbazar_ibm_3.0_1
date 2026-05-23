@@ -57,7 +57,7 @@ const deliveryTransitions: Record<DeliveryStatus, DeliveryStatus[]> = {
   cancelled: [],
 }
 
-  const sellerAssignableKeys = new Set(["vehicleNumber", "vehicleType", "driverName", "driverPhone"])
+const sellerAssignableKeys = new Set(["vehicleNumber", "vehicleType", "driverName", "driverPhone"])
 
 function isAssignmentReady(value: { vehicleNumber: string; driverName: string; driverPhone: string }) {
   const vehicleReady = value.vehicleNumber.trim().length > 0 && value.vehicleNumber !== "Not Assigned"
@@ -79,7 +79,7 @@ export async function GET(_request: Request, { params }: { params: { deliveryId:
 
   const canRead =
     sessionUser.role === "admin" ||
-    sessionUser.role === "distributor" ||
+    (sessionUser.role === "distributor" && delivery.distributorId === sessionUser.userId) ||
     delivery.buyerId === sessionUser.userId ||
     delivery.sellerId === sessionUser.userId
 
@@ -113,9 +113,10 @@ export async function PATCH(request: Request, { params }: { params: { deliveryId
     return NextResponse.json({ error: "Delivery not found" }, { status: 404 })
   }
 
-  const isAdminOrDistributor = sessionUser.role === "admin" || sessionUser.role === "distributor"
+  const isAdmin = sessionUser.role === "admin"
+  const isAssignedDistributor = sessionUser.role === "distributor" && delivery.distributorId === sessionUser.userId
   const isLinkedSeller = sessionUser.role === "seller" && delivery.sellerId === sessionUser.userId
-  if (!isAdminOrDistributor && !isLinkedSeller) {
+  if (!isAdmin && !isAssignedDistributor && !isLinkedSeller) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
@@ -130,6 +131,13 @@ export async function PATCH(request: Request, { params }: { params: { deliveryId
       { error: "Seller can only assign vehicle and driver details for linked orders" },
       { status: 403 },
     )
+  }
+
+  if (
+    isAssignedDistributor &&
+    (parsed.data.distributorId !== undefined || parsed.data.distributorName !== undefined)
+  ) {
+    return NextResponse.json({ error: "Distributor reassignment is restricted to admins" }, { status: 403 })
   }
 
   const hasLocationUpdate =

@@ -6,6 +6,7 @@ import {
   createPaymentIntent,
   getPaymentIntentById,
   getPaymentByOrderId,
+  listDeliveries,
   listOrders,
   listPayments,
   logPaymentEvent,
@@ -325,10 +326,18 @@ export async function GET(request: Request) {
 
   const payments = await listPayments()
   const orders = await listOrders()
+  const deliveries = sessionUser.role === "distributor" ? await listDeliveries() : []
 
   const scopedPayments = (() => {
-    if (sessionUser.role === "admin" || sessionUser.role === "distributor") {
+    if (sessionUser.role === "admin") {
       return payments
+    }
+
+    if (sessionUser.role === "distributor") {
+      const assignedOrderIds = new Set(
+        deliveries.filter((delivery) => delivery.distributorId === sessionUser.userId).map((delivery) => delivery.orderId),
+      )
+      return payments.filter((payment) => assignedOrderIds.has(payment.orderId))
     }
 
     if (sessionUser.role === "buyer") {

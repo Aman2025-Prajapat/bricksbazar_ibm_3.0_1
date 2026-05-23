@@ -3,6 +3,7 @@ import { z } from "zod"
 import { getSessionUser } from "@/lib/server/auth-user"
 import {
   deleteDistributorLocation,
+  getMarketplaceDefaultDistributorId,
   listDistributorLocations,
   upsertDistributorLocation,
   type DistributorLocationStatus,
@@ -21,9 +22,9 @@ const deleteSchema = z.object({
   id: z.string().min(1),
 })
 
-function getDistributorScope(sessionUser: { role: string; userId: string }) {
+async function getDistributorScope(sessionUser: { role: string; userId: string }) {
   if (sessionUser.role === "distributor") return sessionUser.userId
-  if (sessionUser.role === "admin") return "mp-distributor-ops"
+  if (sessionUser.role === "admin") return getMarketplaceDefaultDistributorId()
   return null
 }
 
@@ -40,7 +41,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ locations })
   }
 
-  const distributorId = getDistributorScope(sessionUser)
+  const distributorId = await getDistributorScope(sessionUser)
   if (!distributorId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
@@ -55,7 +56,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const distributorId = getDistributorScope(sessionUser)
+  const distributorId = await getDistributorScope(sessionUser)
   if (!distributorId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
@@ -84,7 +85,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const distributorId = getDistributorScope(sessionUser)
+  const distributorId = await getDistributorScope(sessionUser)
   if (!distributorId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }

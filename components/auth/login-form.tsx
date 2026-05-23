@@ -15,7 +15,7 @@ interface LoginFormProps {
 }
 
 export function LoginForm({ onToggleMode }: LoginFormProps) {
-  const [email, setEmail] = useState("")
+  const [identifier, setIdentifier] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [infoMessage, setInfoMessage] = useState("")
@@ -27,7 +27,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
     setInfoMessage("")
 
     try {
-      const result = await login(email, password)
+      const result = await login(identifier, password)
       if (result.message) {
         setInfoMessage(result.message)
       }
@@ -45,21 +45,29 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="email">Email / Username</Label>
+            <Label htmlFor="identifier">Email / Username</Label>
             <Input
-              id="email"
+              id="identifier"
               type="text"
+              name="identifier"
+              autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               placeholder="Enter your email or username"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
               required
             />
+            <p className="text-xs text-muted-foreground">Admin sign-in must use the exact admin email address.</p>
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">Password</Label>
             <Input
               id="password"
               type="password"
+              name="password"
+              autoComplete="current-password"
               placeholder="Enter your password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

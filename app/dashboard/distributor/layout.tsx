@@ -24,13 +24,16 @@ export default function DistributorDashboardLayout({
     if (user && user.role !== "distributor") {
       router.push(`/dashboard/${user.role}`)
     }
+    if (user && user.role === "distributor" && !user.verified) {
+      router.push("/dashboard/verification-pending")
+    }
   }, [user, loading, router])
 
   if (loading) {
     return <div className="flex items-center justify-center min-h-screen">Loading...</div>
   }
 
-  if (!user || user.role !== "distributor") {
+  if (!user || user.role !== "distributor" || !user.verified) {
     return null
   }
 

@@ -30,16 +30,6 @@
     "avatar": null
   },
   {
-    "id": "a0a84f36-4ee4-45f2-a0ed-e99efe8ac4f4",
-    "name": "Admin",
-    "email": "admin@bricksbazar.com",
-    "role": "admin",
-    "passwordHash": "$2b$12$uk9UeW677tKHdUPKq8wqiOn5QF5cVJR/M1pCQjyeHJdU4F2FzhXhy",
-    "verified": true,
-    "createdAt": "2026-03-04T00:00:00.000Z",
-    "avatar": null
-  },
-  {
     "id": "a4dbbbae-8e7a-49c9-87da-8c5521a5c1a1",
     "name": "seller",
     "email": "seller@123gmail.com",

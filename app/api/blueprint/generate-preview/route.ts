@@ -153,6 +153,61 @@ async function generateWithGemini(prompt: string) {
   }
 }
 
+async function generateWithHuggingFace(prompt: string) {
+  const token = process.env.HUGGINGFACE_API_TOKEN?.trim() || ""
+  const model = (process.env.HUGGINGFACE_IMAGE_MODEL?.trim() || "stabilityai/stable-diffusion-xl-base-1.0").replace(/^\/+/, "")
+  if (!token) {
+    return { imageUrl: null as string | null, model: null as string | null, error: "HUGGINGFACE_API_TOKEN is missing on server." }
+  }
+
+  const endpoint = `https://router.huggingface.co/hf-inference/models/${model}`
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "image/png",
+    },
+    body: JSON.stringify({
+      inputs: prompt,
+      options: {
+        wait_for_model: true,
+      },
+      parameters: {
+        guidance_scale: 7,
+        num_inference_steps: 28,
+      },
+    }),
+  })
+
+  if (!response.ok) {
+    const raw = await response.text().catch(() => "")
+    return {
+      imageUrl: null as string | null,
+      model: null as string | null,
+      error: `HuggingFace ${model} failed (${response.status}): ${raw.slice(0, 180)}`,
+    }
+  }
+
+  const contentType = response.headers.get("content-type") || "image/png"
+  if (!contentType.startsWith("image/")) {
+    const raw = await response.text().catch(() => "")
+    return {
+      imageUrl: null as string | null,
+      model: null as string | null,
+      error: `HuggingFace ${model} returned non-image response: ${raw.slice(0, 180)}`,
+    }
+  }
+
+  const bytes = await response.arrayBuffer()
+  const base64 = Buffer.from(bytes).toString("base64")
+  return {
+    imageUrl: `data:${contentType};base64,${base64}`,
+    model: `huggingface:${model}`,
+    error: null as string | null,
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const sessionUser = await getSessionUser()
@@ -172,10 +227,21 @@ export async function POST(request: Request) {
     const result = await generateWithGemini(finalPrompt)
 
     if (!result.imageUrl) {
+      const hfResult = await generateWithHuggingFace(finalPrompt)
+      if (hfResult.imageUrl) {
+        return NextResponse.json(
+          {
+            imageUrl: hfResult.imageUrl,
+            message: `HD preview generated using ${hfResult.model}.`,
+          },
+          { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } },
+        )
+      }
+
       return NextResponse.json(
         {
           imageUrl: null,
-          error: result.error || "Could not generate image preview.",
+          error: [result.error, hfResult.error].filter(Boolean).join(" | ") || "Could not generate image preview.",
           fallback: true,
         },
         { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } },

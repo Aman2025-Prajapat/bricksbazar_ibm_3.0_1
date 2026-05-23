@@ -12,7 +12,8 @@ export async function GET() {
   const orderMap = new Map(orders.map((order) => [order.id, order]))
 
   const scopedDeliveries = deliveries.filter((delivery) => {
-    if (sessionUser.role === "admin" || sessionUser.role === "distributor") return true
+    if (sessionUser.role === "admin") return true
+    if (sessionUser.role === "distributor") return delivery.distributorId === sessionUser.userId
     if (sessionUser.role === "buyer") return delivery.buyerId === sessionUser.userId
     return delivery.sellerId === sessionUser.userId
   })

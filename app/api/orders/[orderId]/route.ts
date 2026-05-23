@@ -50,10 +50,20 @@ export async function PATCH(request: Request, { params }: { params: { orderId: s
     return NextResponse.json({ error: "Order not found" }, { status: 404 })
   }
 
-  const isAdminOrDistributor = sessionUser.role === "admin" || sessionUser.role === "distributor"
+  const linkedDelivery = await getDeliveryByOrderId(params.orderId)
+  const isAdmin = sessionUser.role === "admin"
+  const isLinkedDistributor =
+    sessionUser.role === "distributor" && linkedDelivery?.distributorId === sessionUser.userId
   const isLinkedSeller = sessionUser.role === "seller" && order.items.some((item) => item.sellerId === sessionUser.userId)
-  if (!isAdminOrDistributor && !isLinkedSeller) {
+  if (!isAdmin && !isLinkedDistributor && !isLinkedSeller) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
+
+  if (
+    sessionUser.role === "distributor" &&
+    (parsed.data.distributorId !== undefined || parsed.data.distributorName !== undefined)
+  ) {
+    return NextResponse.json({ error: "Distributor reassignment is restricted to admins" }, { status: 403 })
   }
 
   const nextStatus = parsed.data.status

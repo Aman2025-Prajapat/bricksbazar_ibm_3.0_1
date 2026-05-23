@@ -8,7 +8,8 @@ async function getScopedDeliveries(userId: string, role: "buyer" | "seller" | "d
   const orderMap = new Map(orders.map((order) => [order.id, order]))
 
   const scoped = deliveries.filter((delivery) => {
-    if (role === "admin" || role === "distributor") return true
+    if (role === "admin") return true
+    if (role === "distributor") return delivery.distributorId === userId
     if (role === "buyer") return delivery.buyerId === userId
     return delivery.sellerId === userId
   })
